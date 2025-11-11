@@ -1,0 +1,27 @@
+# Transcribe Configuration Example
+# Copy this to ~/.transcribe/config.yaml and customize
+
+# Directory to watch for new video files
+watch_directory: /Users/yourusername/Movies
+
+# Destination directory (e.g., iCloud) where processed files will be moved
+destination_directory: /Users/yourusername/Library/Mobile Documents/com~apple~CloudDocs/Movies
+
+# OpenAI API key for transcript summarization
+# Get yours at: https://platform.openai.com/api-keys
+openai_api_key: sk-your-api-key-here
+
+# Slack webhook URL for notifications
+# Create one at: https://api.slack.com/messaging/webhooks
+slack_webhook_url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Video file extensions to process
+video_extensions:
+  - .mov
+  - .mp4
+  - .avi
+  - .mkv
+  - .m4v
+
+# Optional: iCloud base URL for links in Slack messages
+icloud_base_url: https://www.icloud.com/iclouddrive/

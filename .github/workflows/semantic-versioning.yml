@@ -1,0 +1,135 @@
+name: Semantic Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  semantic-release:
+    uses: CalebSargeant/reusable-workflows/.github/workflows/semantic-release.yaml@d73e91236c0c99d696d6d62b5ed1b052f1771ba8 # first commit when it was introduced - no versioning as of yet
+    with:
+      bump: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bump || '' }}
+      working_directory: '.'
+    secrets:
+      APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+    permissions:
+      contents: write
+      id-token: write
+
+  build:
+    name: Build binaries on ${{ matrix.os }} - ${{ matrix.arch }}
+    needs: semantic-release
+    if: needs.semantic-release.outputs.released == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: macos
+            arch: arm64
+            runner: macos-14
+            artifact_name: maniforge-macos-arm64
+          - os: macos
+            arch: x86_64
+            runner: macos-13
+            artifact_name: maniforge-macos-x86_64
+          - os: linux
+            arch: x86_64
+            runner: ubuntu-latest
+            artifact_name: maniforge-linux-x86_64
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            artifact_name: maniforge-linux-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ needs.semantic-release.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pyyaml
+
+      - name: Build executable
+        run: |
+          pyinstaller --clean maniforge.spec
+
+      - name: Rename executable
+        run: |
+          mv dist/maniforge dist/${{ matrix.artifact_name }}
+
+      - name: Make executable
+        run: |
+          chmod +x dist/${{ matrix.artifact_name }}
+
+      - name: Test executable
+        run: |
+          dist/${{ matrix.artifact_name }} --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
+
+  upload:
+    name: Upload binaries to release
+    needs: [semantic-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: dist
+
+      - name: Display structure
+        run: ls -R dist
+
+      - name: Calculate SHA256 checksums
+        run: |
+          cd dist
+          for dir in */; do
+            cd "$dir"
+            for file in maniforge-*; do
+              sha256sum "$file" >> ../SHA256SUMS
+            done
+            cd ..
+          done
+          cat SHA256SUMS
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
+        with:
+          tag_name: ${{ needs.semantic-release.outputs.tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            dist/maniforge-macos-arm64/maniforge-macos-arm64
+            dist/maniforge-macos-x86_64/maniforge-macos-x86_64
+            dist/maniforge-linux-x86_64/maniforge-linux-x86_64
+            dist/maniforge-linux-arm64/maniforge-linux-arm64
+            dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

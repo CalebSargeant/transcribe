@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import yaml
+import re
 
 # Configuration
 CONFIG_DIR = Path.home() / ".transcribe"
@@ -79,93 +80,257 @@ def summarize_with_openai(transcript, api_key):
         print(f"Warning: Failed to summarize with OpenAI: {e}")
         return None
 
-def send_slack_notification(video_name, video_path, transcript_path, summary_path, config):
-    """Send notification to Slack with file links."""
+def generate_title_description_with_openai(transcript, api_key):
+    """Generate a short title and description for Slack notification."""
+    try:
+        import openai
+        client = openai.OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that creates concise titles and descriptions for video transcripts. The title should be 5-10 words, and the description should be 1-2 sentences (max 100 words) summarizing the key topic."},
+                {"role": "user", "content": f"Create a short title and 1-2 sentence description for this video transcript:\n\n{transcript}\n\nFormat your response as:\nTitle: [your title]\nDescription: [your description]"}
+            ],
+            temperature=0.7,
+            max_tokens=200
+        )
+        
+        content = response.choices[0].message.content
+        # Parse title and description
+        lines = content.strip().split('\n')
+        title = ""
+        description = ""
+        
+        for line in lines:
+            if line.startswith("Title:"):
+                title = line.replace("Title:", "").strip()
+            elif line.startswith("Description:"):
+                description = line.replace("Description:", "").strip()
+        
+        return title, description
+    except Exception as e:
+        print(f"Warning: Failed to generate title/description with OpenAI: {e}")
+        return None, None
+
+def extract_action_items_with_openai(transcript, api_key):
+    """Extract clear, actionable items from transcript."""
+    try:
+        import openai
+        client = openai.OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that extracts actionable items from meeting transcripts. Only include items that are clearly actionable and should be acted upon. Each action item should be specific, clear, and include who should do it if mentioned. Format as a simple bullet list."},
+                {"role": "user", "content": f"Extract ONLY the clear, actionable items from this transcript. Do not include general discussion points or vague items. Each item should be something specific that needs to be done.\n\nTranscript:\n{transcript}\n\nFormat your response as a bullet list, one action per line starting with '- '. If there are no clear action items, respond with 'No specific action items identified.'"}
+            ],
+            temperature=0.3,  # Lower temperature for more focused output
+            max_tokens=300
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Check if there are actual action items
+        if "no specific action items" in content.lower() or "no action items" in content.lower():
+            return []
+        
+        # Parse action items
+        action_items = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('-') or line.startswith('•'):
+                # Remove bullet and clean up
+                item = line[1:].strip()
+                if item:
+                    action_items.append(item)
+        
+        return action_items
+    except Exception as e:
+        print(f"Warning: Failed to extract action items with OpenAI: {e}")
+        return []
+
+def get_google_drive_folder_url(folder_path):
+    """Get the Google Drive web URL for a folder."""
+    try:
+        from google.auth import default
+        from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
+        
+        # Get folder name from path
+        folder_name = Path(folder_path).name
+        
+        # Authenticate using application default credentials (from gcloud)
+        credentials, project = default(scopes=['https://www.googleapis.com/auth/drive.readonly'])
+        
+        # Set quota project explicitly
+        if not project:
+            project = 'magmamoose-terraform'
+        
+        credentials = credentials.with_quota_project(project)
+        
+        # Build Drive API service
+        service = build('drive', 'v3', credentials=credentials)
+        
+        # Wait for folder to sync (retry up to 10 times with 5 second delay)
+        max_retries = 10
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            # Search for folder by name
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name, parents)',
+                pageSize=10
+            ).execute()
+            
+            files = results.get('files', [])
+            
+            if files:
+                folder_id = files[0]['id']
+                print(f"✓ Found folder in Google Drive after {attempt + 1} attempt(s)")
+                return f"https://drive.google.com/drive/folders/{folder_id}"
+            
+            # If not found and not last attempt, wait for sync
+            if attempt < max_retries - 1:
+                print(f"Waiting for Google Drive to sync folder... ({attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+        
+        print(f"Warning: Could not find folder '{folder_name}' in Google Drive after {max_retries} attempts")
+        print("Google Drive Desktop may still be syncing the folder.")
+        return None
+            
+    except Exception as e:
+        print(f"Warning: Failed to get Google Drive URL: {e}")
+        print("Falling back to file:// link")
+        return None
+
+def send_slack_notification(video_name, folder_path, title, description, action_items, config):
+    """Send notification to Slack with Google Drive folder link and action items."""
     try:
         import requests
+        import urllib.parse
         
+        # Check for bot token first, then webhook URL
+        bot_token = config.get("slack_bot_token")
+        channel_id = config.get("slack_channel_id")
         webhook_url = config.get("slack_webhook_url")
-        if not webhook_url:
-            print("Warning: No Slack webhook URL configured")
+        
+        if not bot_token and not webhook_url:
+            print("Warning: No Slack credentials configured (need bot_token+channel_id or webhook_url)")
             return
         
-        # Create message
-        dest_dir = Path(config["destination_directory"])
-        icloud_base = config.get("icloud_base_url", "iCloud folder")
+        # Get Google Drive URL
+        folder_link = get_google_drive_folder_url(folder_path)
         
-        message = {
-            "blocks": [
-                {
-                    "type": "header",
-                    "text": {
-                        "type": "plain_text",
-                        "text": f"📹 Video Transcribed: {video_name}"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Processed:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n*Location:* {dest_dir / video_name}"
-                    }
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"*Files:*\n• Video: `{video_name}`\n• Transcript: `{Path(transcript_path).name}`\n• Summary: `{Path(summary_path).name if summary_path else 'N/A'}`"
-                    }
+        # Fall back to file:// if Drive API fails
+        if not folder_link:
+            folder_link = f"file://{urllib.parse.quote(str(folder_path))}"
+        
+        # Use title from OpenAI or fallback to video name
+        header_text = title if title else f"📹 {video_name}"
+        
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": header_text
                 }
-            ]
-        }
-        
-        # Add summary if available
-        if summary_path and Path(summary_path).exists():
-            with open(summary_path, "r") as f:
-                summary = f.read()
-            if len(summary) > 500:
-                summary = summary[:500] + "..."
-            message["blocks"].append({
+            },
+            {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Summary:*\n{summary}"
+                    "text": f"{description if description else 'Video transcribed and summarized'}\n\n<{folder_link}|Open folder in Google Drive>"
+                }
+            }
+        ]
+        
+        # Add action items if any
+        if action_items:
+            action_text = "*Action Items:*\n" + "\n".join([f"• {item}" for item in action_items])
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": action_text
                 }
             })
         
-        response = requests.post(webhook_url, json=message)
-        response.raise_for_status()
+        # Add timestamp at the end
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Processed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                }
+            ]
+        })
+        
+        # Send via bot token or webhook
+        if bot_token and channel_id:
+            # Use chat.postMessage API
+            response = requests.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={
+                    "Authorization": f"Bearer {bot_token}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "channel": channel_id,
+                    "blocks": blocks
+                }
+            )
+            result = response.json()
+            if not result.get("ok"):
+                raise Exception(f"Slack API error: {result.get('error')}")
+        else:
+            # Use webhook
+            response = requests.post(webhook_url, json={"blocks": blocks})
+            response.raise_for_status()
+        
         print("✓ Slack notification sent")
         
     except Exception as e:
         print(f"Warning: Failed to send Slack notification: {e}")
 
 def move_files_to_destination(video_path, transcript_path, summary_path, config):
-    """Move all files to the destination directory."""
-    dest_dir = Path(config["destination_directory"])
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    """Move all files to a dedicated folder in the destination directory."""
+    base_dest_dir = Path(config["destination_directory"])
+    
+    # Create a folder named after the video file (without extension)
+    video_name = Path(video_path).stem
+    video_folder = base_dest_dir / video_name
+    video_folder.mkdir(parents=True, exist_ok=True)
     
     moved_files = {}
     
     # Move video
-    video_dest = dest_dir / Path(video_path).name
+    video_dest = video_folder / Path(video_path).name
     shutil.move(video_path, video_dest)
     moved_files["video"] = str(video_dest)
     print(f"✓ Moved video to {video_dest}")
     
     # Move transcript
     if Path(transcript_path).exists():
-        transcript_dest = dest_dir / Path(transcript_path).name
+        transcript_dest = video_folder / Path(transcript_path).name
         shutil.move(transcript_path, transcript_dest)
         moved_files["transcript"] = str(transcript_dest)
         print(f"✓ Moved transcript to {transcript_dest}")
     
     # Move summary if it exists
     if summary_path and Path(summary_path).exists():
-        summary_dest = dest_dir / Path(summary_path).name
+        summary_dest = video_folder / Path(summary_path).name
         shutil.move(summary_path, summary_dest)
         moved_files["summary"] = str(summary_dest)
         print(f"✓ Moved summary to {summary_dest}")
+    
+    # Return the folder path as well
+    moved_files["folder"] = str(video_folder)
     
     return moved_files
 
@@ -242,8 +407,11 @@ def process_video_file(video_file, config=None):
             f.write(transcript)
         print(f"✓ Transcript saved to: {transcript_file}")
         
-        # Summarize with OpenAI
+        # Generate title and description with OpenAI
+        title = None
+        description = None
         summary_file = None
+        
         if config.get("openai_api_key"):
             print("\n--- Generating Summary with OpenAI ---")
             summary = summarize_with_openai(transcript, config["openai_api_key"])
@@ -252,7 +420,24 @@ def process_video_file(video_file, config=None):
                 with open(summary_file, "w") as f:
                     f.write(summary)
                 print(f"✓ Summary saved to: {summary_file}")
-                print(f"\n{summary}")
+            
+            print("\n--- Generating Title & Description for Slack ---")
+            title, description = generate_title_description_with_openai(transcript, config["openai_api_key"])
+            if title:
+                print(f"✓ Title: {title}")
+            if description:
+                print(f"✓ Description: {description}")
+            
+            print("\n--- Extracting Action Items ---")
+            action_items = extract_action_items_with_openai(transcript, config["openai_api_key"])
+            if action_items:
+                print(f"✓ Found {len(action_items)} action item(s)")
+                for i, item in enumerate(action_items, 1):
+                    print(f"  {i}. {item}")
+            else:
+                print("✓ No specific action items identified")
+        else:
+            action_items = []
         
         # Move files to destination
         if config.get("destination_directory"):
@@ -260,13 +445,14 @@ def process_video_file(video_file, config=None):
             moved_files = move_files_to_destination(video_file, transcript_file, summary_file, config)
             
             # Send Slack notification
-            if config.get("slack_webhook_url"):
+            if config.get("slack_webhook_url") or config.get("slack_bot_token"):
                 print("\n--- Sending Notification ---")
                 send_slack_notification(
                     Path(video_file).name,
-                    moved_files.get("video"),
-                    moved_files.get("transcript"),
-                    moved_files.get("summary"),
+                    moved_files.get("folder"),
+                    title,
+                    description,
+                    action_items,
                     config
                 )
         

@@ -3,5 +3,9 @@ watchdog>=3.0.0
 openai>=1.0.0
 requests>=2.31.0
 
+# Optional: Google Drive API support for folder links
+google-auth>=2.0.0
+google-api-python-client>=2.0.0
+
 # System dependencies (install via Homebrew):
 # brew install whisper-cpp ffmpeg

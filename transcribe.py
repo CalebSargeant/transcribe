@@ -592,7 +592,15 @@ def main():
     
     command = sys.argv[1]
     
-    if command == "config":
+    
+    if command in ["--help", "-h", "help"]:
+        print("Usage:")
+        print("  transcribe <video_file>           - Transcribe a single file")
+        print("  transcribe watch [directory]      - Watch directory for new files")
+        print("  transcribe setup-daemon           - Install background daemon")
+        print("  transcribe config                 - Show/edit configuration")
+        sys.exit(0)
+    elif command == "config":
         configure()
     elif command == "setup-daemon":
         config = load_config()

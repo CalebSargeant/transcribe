@@ -40,19 +40,19 @@ jobs:
           - os: macos
             arch: arm64
             runner: macos-14
-            artifact_name: maniforge-macos-arm64
+            artifact_name: transcribe-macos-arm64
           - os: macos
             arch: x86_64
             runner: macos-13
-            artifact_name: maniforge-macos-x86_64
+            artifact_name: transcribe-macos-x86_64
           - os: linux
             arch: x86_64
             runner: ubuntu-latest
-            artifact_name: maniforge-linux-x86_64
+            artifact_name: transcribe-linux-x86_64
           - os: linux
             arch: arm64
             runner: ubuntu-latest
-            artifact_name: maniforge-linux-arm64
+            artifact_name: transcribe-linux-arm64
 
     steps:
       - name: Checkout
@@ -72,11 +72,11 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --clean maniforge.spec
+          pyinstaller --clean transcribe.spec
 
       - name: Rename executable
         run: |
-          mv dist/maniforge dist/${{ matrix.artifact_name }}
+          mv dist/transcribe dist/${{ matrix.artifact_name }}
 
       - name: Make executable
         run: |
@@ -113,7 +113,7 @@ jobs:
           cd dist
           for dir in */; do
             cd "$dir"
-            for file in maniforge-*; do
+            for file in transcribe-*; do
               sha256sum "$file" >> ../SHA256SUMS
             done
             cd ..
@@ -126,10 +126,10 @@ jobs:
           tag_name: ${{ needs.semantic-release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            dist/maniforge-macos-arm64/maniforge-macos-arm64
-            dist/maniforge-macos-x86_64/maniforge-macos-x86_64
-            dist/maniforge-linux-x86_64/maniforge-linux-x86_64
-            dist/maniforge-linux-arm64/maniforge-linux-arm64
+            dist/transcribe-macos-arm64/transcribe-macos-arm64
+            dist/transcribe-macos-x86_64/transcribe-macos-x86_64
+            dist/transcribe-linux-x86_64/transcribe-linux-x86_64
+            dist/transcribe-linux-arm64/transcribe-linux-arm64
             dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

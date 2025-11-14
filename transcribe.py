@@ -21,6 +21,13 @@ from datetime import datetime
 import yaml
 import re
 
+# Force line-buffered output for daemon logging
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 # Configuration
 CONFIG_DIR = Path.home() / ".transcribe"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
@@ -495,8 +502,8 @@ def watch_directory(directory, config):
                 self.processing.add(file_path)
                 
                 # Wait a bit to ensure file is fully written
-                print(f"Detected new file: {Path(file_path).name}")
-                print("Waiting for file to finish writing...")
+                print(f"Detected new file: {Path(file_path).name}", flush=True)
+                print("Waiting for file to finish writing...", flush=True)
                 time.sleep(2)
                 
                 # Check if file still exists and is accessible
@@ -505,9 +512,10 @@ def watch_directory(directory, config):
                 
                 self.processing.discard(file_path)
     
-    print(f"Watching directory: {directory}")
-    print(f"Video extensions: {', '.join(config.get('video_extensions', []))}")
-    print("Press Ctrl+C to stop...\n")
+    print(f"Watching directory: {directory}", flush=True)
+    print(f"Video extensions: {', '.join(config.get('video_extensions', []))}", flush=True)
+    print("Press Ctrl+C to stop...\n", flush=True)
+    sys.stdout.flush()
     
     event_handler = VideoHandler(config)
     observer = Observer()
@@ -536,6 +544,11 @@ def setup_daemon(config):
         <string>watch</string>
         <string>{config['watch_directory']}</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

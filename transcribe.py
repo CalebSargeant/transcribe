@@ -345,6 +345,10 @@ def transcribe_video(video_path):
     """Transcribe a video file and return the text."""
     print(f"Extracting audio from {video_path}...")
     
+    # Find tools in PATH
+    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    whisper_bin = shutil.which("whisper-cli") or "/opt/homebrew/bin/whisper-cli"
+    
     # Extract audio to WAV for faster processing
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
         audio_path = temp_audio.name
@@ -352,7 +356,7 @@ def transcribe_video(video_path):
     try:
         # Extract audio using ffmpeg
         subprocess.run(
-            ["ffmpeg", "-i", video_path, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", audio_path, "-y"],
+            [ffmpeg_bin, "-i", video_path, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", audio_path, "-y"],
             check=True,
             capture_output=True
         )
@@ -369,7 +373,7 @@ def transcribe_video(video_path):
         
         # Use whisper-cli with progress
         result = subprocess.run(
-            ["whisper-cli", "-m", model_path, "-f", audio_path, "-nt", "-pp"],
+            [whisper_bin, "-m", model_path, "-f", audio_path, "-nt", "-pp"],
             capture_output=True,
             text=True,
             check=True

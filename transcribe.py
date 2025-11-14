@@ -481,6 +481,12 @@ def watch_directory(directory, config):
         print("Error: watchdog library not installed. Install with: pip install watchdog")
         sys.exit(1)
     
+    # Write startup message to log (for daemon visibility)
+    startup_msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Transcribe daemon started\n"
+    startup_msg += f"Watching: {directory}\n"
+    startup_msg += f"Extensions: {', '.join(config.get('video_extensions', []))}\n"
+    print(startup_msg, flush=True)
+    
     class VideoHandler(FileSystemEventHandler):
         def __init__(self, config):
             self.config = config
@@ -548,6 +554,8 @@ def setup_daemon(config):
     <dict>
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

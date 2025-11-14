@@ -2,92 +2,62 @@
 
 Automated video/audio transcription tool with OpenAI summarization and Slack notifications.
 
+📚 **[Full Installation & Configuration Guide](INSTALL.md)** | 🐛 [Issues](https://github.com/CalebSargeant/transcribe/issues) | 📦 [Releases](https://github.com/CalebSargeant/transcribe/releases)
+
 ## Features
 
 - 🎤 **Local Transcription**: Uses `whisper-cpp` for fast, privacy-focused transcription
 - 👁️ **Auto-Watch**: Monitors directories for new video files and processes them automatically
 - 🤖 **AI Summarization**: Generates summaries with timestamps and action items using OpenAI
-- 📁 **iCloud Integration**: Automatically moves processed files to iCloud for storage
+- 📁 **Smart Organization**: Automatically moves processed files to configured destination
 - 💬 **Slack Notifications**: Sends formatted notifications with file links when processing completes
 - 🎬 **Multi-Format**: Supports all video formats supported by ffmpeg (MOV, MP4, AVI, MKV, etc.)
 
-## Installation
-
-### Via Homebrew (recommended)
-
-```bash
-brew install calebsargeant/tap/transcribe
-```
-
-### Manual Installation
-
-```bash
-# Install system dependencies
-brew install whisper-cpp ffmpeg
-
-# Clone and install
-git clone https://github.com/calebsargeant/transcribe.git
-cd transcribe
-pip install -e .
-
-# Download Whisper model
-mkdir -p models
-curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-```
-
 ## Quick Start
 
-### 1. Configure
-
-First time setup - configure your settings:
+### Installation
 
 ```bash
-transcribe config
+# Add the tap and install
+brew tap CalebSargeant/tap
+brew install transcribe
+
+# Download Whisper model (~140MB)
+mkdir -p ~/.whisper-models
+curl -L -o ~/.whisper-models/ggml-base.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+
+# Configure
+transcribe config  # Opens ~/.transcribe/config.yaml
 ```
 
-This creates `~/.transcribe/config.yaml`. Edit it to add:
-- `openai_api_key`: Your OpenAI API key (for summarization)
-- `slack_webhook_url`: Your Slack webhook URL (for notifications)
-- `destination_directory`: Where to move processed files (default: iCloud/Movies)
-- `watch_directory`: Directory to monitor (default: ~/Movies)
+**📚 For detailed installation instructions, see [INSTALL.md](INSTALL.md)**
 
-### 2. Transcribe a Single File
+### Basic Usage
+
+**Transcribe a single file:**
 
 ```bash
 transcribe video.mov
 ```
 
-This will:
-1. Extract audio from the video
-2. Transcribe using Whisper (local)
-3. Summarize with OpenAI (if configured)
-4. Move files to iCloud (if configured)
-5. Send Slack notification (if configured)
-
-### 3. Watch a Directory
-
-Monitor a directory for new videos:
+**Watch a directory:**
 
 ```bash
-transcribe watch ~/Movies
+transcribe watch ~/Movies  # Press Ctrl+C to stop
 ```
 
-Any new video files will be automatically processed.
-
-### 4. Setup Background Daemon (Recommended)
-
-For fully automated transcription on login:
+**Setup as background daemon (recommended):**
 
 ```bash
 transcribe setup-daemon
 launchctl load ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
+
+# View logs
+tail -f ~/Library/Logs/transcribe.log
 ```
 
-Now any video dropped into ~/Movies will be automatically:
-1. Transcribed
-2. Summarized
-3. Moved to iCloud
-4. Announced in Slack
+Now any video dropped into your watch directory will be automatically processed!
 
 ## Configuration
 
@@ -170,18 +140,21 @@ By default, the `base` model is used. You can download other models:
 
 ## Troubleshooting
 
-### Check daemon status
+**See the [Full Installation Guide](INSTALL.md#troubleshooting)** for detailed troubleshooting steps.
+
+Quick checks:
+
 ```bash
+# Check daemon status
 launchctl list | grep transcribe
-```
 
-### View logs
-```bash
+# View logs
 tail -f ~/Library/Logs/transcribe.log
-```
 
-### Restart daemon
-```bash
+# Verify model exists
+ls -lh ~/.whisper-models/ggml-base.bin
+
+# Restart daemon
 launchctl unload ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
 launchctl load ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
 ```

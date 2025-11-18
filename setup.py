@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="transcribe",
-    version="2.0.0",
+    version="2.0.1",
     author="Caleb Sargeant",
     description="Video/audio transcription tool with auto-watch, OpenAI summarization, and Slack notifications",
     py_modules=["transcribe"],

@@ -6,6 +6,7 @@ Usage:
   transcribe watch <directory>      - Watch directory for new files
   transcribe setup-daemon           - Install background daemon
   transcribe config                 - Configure settings
+  transcribe --version              - Show version information
 Requires: brew install whisper-cpp ffmpeg
 """
 
@@ -21,6 +22,9 @@ from datetime import datetime
 import yaml
 import re
 import ssl
+
+# Version
+__version__ = "2.0.1"
 
 
 def _ensure_tls_ca_bundle():
@@ -657,25 +661,39 @@ def configure():
     print("  - openai_api_key: For transcript summarization")
     print("  - slack_webhook_url: For notifications")
 
+def _print_usage():
+    print("Usage:")
+    print("  transcribe <video_file>           - Transcribe a single file")
+    print("  transcribe watch [directory]      - Watch directory for new files")
+    print("  transcribe setup-daemon           - Install background daemon")
+    print("  transcribe config                 - Show/edit configuration")
+    print("  transcribe --version              - Show version information")
+
+
+def _print_version():
+    # Prefer package metadata when available
+    try:
+        from importlib.metadata import version as _version
+        ver = _version("transcribe")
+    except Exception:
+        ver = __version__
+    source = "brew/pyinstaller" if getattr(sys, "frozen", False) else "python package"
+    print(f"transcribe {ver} ({source})")
+
+
 def main():
     """Main entry point for the transcribe command."""
     if len(sys.argv) < 2:
-        print("Usage:")
-        print("  transcribe <video_file>           - Transcribe a single file")
-        print("  transcribe watch [directory]      - Watch directory for new files")
-        print("  transcribe setup-daemon           - Install background daemon")
-        print("  transcribe config                 - Show/edit configuration")
+        _print_usage()
         sys.exit(1)
     
     command = sys.argv[1]
     
-    
     if command in ["--help", "-h", "help"]:
-        print("Usage:")
-        print("  transcribe <video_file>           - Transcribe a single file")
-        print("  transcribe watch [directory]      - Watch directory for new files")
-        print("  transcribe setup-daemon           - Install background daemon")
-        print("  transcribe config                 - Show/edit configuration")
+        _print_usage()
+        sys.exit(0)
+    elif command in ["--version", "-v", "version"]:
+        _print_version()
         sys.exit(0)
     elif command == "config":
         configure()

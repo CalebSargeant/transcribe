@@ -134,3 +134,25 @@ jobs:
             dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew-tap:
+    name: Update Homebrew tap checksums
+    needs: [semantic-release, build, upload]
+    if: needs.semantic-release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger SHA256 update workflow in homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping Homebrew tap SHA update."
+            exit 0
+          fi
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/CalebSargeant/homebrew-tap/actions/workflows/update-sha256.yml/dispatches \
+            -d '{"ref":"main","inputs":{"formula":"transcribe"}}'

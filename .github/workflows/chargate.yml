@@ -1,0 +1,15 @@
+name: Chargate
+
+# Dogfood the user's own security gate: chargate runs as a reusable workflow on
+# every PR (net-new MegaLinter + secret scanning). Pinned by floating major tag
+# (magmamoose/chargate@v2) so it tracks the latest stable v2.x.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  security:
+    uses: magmamoose/chargate/.github/workflows/gate.yml@9e64603f83ca3cf5e03d4566903e4ae3f91613e9 # v2.0.2

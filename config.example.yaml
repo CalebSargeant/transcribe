@@ -7,9 +7,20 @@ watch_directory: /Users/yourusername/Movies
 # Destination directory (e.g., iCloud) where processed files will be moved
 destination_directory: /Users/yourusername/Library/Mobile Documents/com~apple~CloudDocs/Movies
 
-# OpenAI API key for transcript summarization
+# LLM provider for summaries, titles/descriptions, and action items.
+# One of: claude (default, uses Anthropic) | openai
+llm_provider: claude
+
+# Anthropic (Claude) settings -- used when llm_provider is "claude" (default).
+# Get a key at: https://console.anthropic.com/
+# Default is the current Claude Haiku 4.5.
+anthropic_api_key: sk-ant-your-api-key-here
+anthropic_model: claude-haiku-4-5-20251001
+
+# OpenAI settings -- used when llm_provider is "openai".
 # Get yours at: https://platform.openai.com/api-keys
 openai_api_key: sk-your-api-key-here
+openai_model: gpt-4o-mini
 
 # Slack webhook URL for notifications
 # Create one at: https://api.slack.com/messaging/webhooks
@@ -22,6 +33,10 @@ video_extensions:
   - .avi
   - .mkv
   - .m4v
+
+# Whisper ggml model name (resolves to ggml-<name>.bin).
+# If the model file is missing it is auto-downloaded to ~/.whisper-models/.
+whisper_model: base
 
 # Optional: iCloud base URL for links in Slack messages
 icloud_base_url: https://www.icloud.com/iclouddrive/

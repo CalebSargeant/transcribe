@@ -1,170 +1,172 @@
 # Transcribe
 
-Automated video/audio transcription tool with OpenAI summarization and Slack notifications.
+Automated video/audio transcription for macOS, with local Whisper transcription, LLM
+summarization (Claude by default, OpenAI optional), and Slack notifications.
 
-📚 **[Full Installation & Configuration Guide](INSTALL.md)** | 🐛 [Issues](https://github.com/CalebSargeant/transcribe/issues) | 📦 [Releases](https://github.com/CalebSargeant/transcribe/releases)
+[Issues](https://github.com/CalebSargeant/transcribe/issues) ·
+[Releases](https://github.com/CalebSargeant/transcribe/releases) ·
+[Docs](docs/)
 
-## Features
+> macOS only. Tested on Apple Silicon and Intel Macs.
 
-- 🎤 **Local Transcription**: Uses `whisper-cpp` for fast, privacy-focused transcription
-- 👁️ **Auto-Watch**: Monitors directories for new video files and processes them automatically
-- 🤖 **AI Summarization**: Generates summaries with timestamps and action items using OpenAI
-- 📁 **Smart Organization**: Automatically moves processed files to configured destination
-- 💬 **Slack Notifications**: Sends formatted notifications with file links when processing completes
-- 🎬 **Multi-Format**: Supports all video formats supported by ffmpeg (MOV, MP4, AVI, MKV, etc.)
+## What it does
 
-## Quick Start
+- **Local transcription** — uses `whisper-cpp` for fast, private, on-device transcription.
+- **Auto-download model** — the Whisper ggml model is fetched automatically on first use;
+  no manual `curl` step required.
+- **LLM summarization** — generates a summary, a title/description, and action items.
+  Defaults to **Claude (Anthropic)**; OpenAI is supported as an alternative.
+- **Auto-watch** — monitors a directory and processes new video files automatically.
+- **Background daemon** — runs as a macOS `launchd` agent, starting on login.
+- **Smart organization** — moves the video, transcript, and summary into a per-video folder
+  in your destination directory (e.g. iCloud or Google Drive).
+- **Slack notifications** — posts a formatted message (title, description, action items,
+  folder link) when processing finishes.
+- **JSON output** — pass `--json` to also emit a machine-readable `<video>_result.json`.
+- **Multi-format** — any video format ffmpeg can read (MOV, MP4, AVI, MKV, M4V, ...).
 
-### Installation
-
-```bash
-# Add the tap and install
-brew tap CalebSargeant/tap
-brew install transcribe
-
-# Download Whisper model (~140MB)
-mkdir -p ~/.whisper-models
-curl -L -o ~/.whisper-models/ggml-base.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-
-# Configure
-transcribe config  # Opens ~/.transcribe/config.yaml
-```
-
-**📚 For detailed installation instructions, see [INSTALL.md](INSTALL.md)**
-
-### Basic Usage
-
-**Transcribe a single file:**
+## Quickstart
 
 ```bash
-transcribe video.mov
+# 1. Install via Homebrew (the tap lives under MagmaMoose)
+brew tap MagmaMoose/tap
+brew install transcribe          # or: brew install magmamoose/tap/transcribe
+
+# 2. Create the config file
+transcribe config                # writes ~/.transcribe/config.yaml
+
+# 3. Add an API key (Claude by default) — see Configuration below
+#    Edit ~/.transcribe/config.yaml and set anthropic_api_key
+
+# 4. Transcribe a file
+transcribe meeting.mov
 ```
 
-**Watch a directory:**
+The Whisper model downloads itself on first run, and `whisper-cpp` + `ffmpeg` are pulled in
+automatically as Homebrew dependencies.
 
-```bash
-transcribe watch ~/Movies  # Press Ctrl+C to stop
-```
-
-**Setup as background daemon (recommended):**
-
-```bash
-transcribe setup-daemon
-launchctl load ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
-
-# View logs
-tail -f ~/Library/Logs/transcribe.log
-```
-
-Now any video dropped into your watch directory will be automatically processed!
+For step-by-step setup (API keys, Slack, Google Drive), see
+**[docs/install.md](docs/install.md)**.
 
 ## Configuration
 
-Configuration file: `~/.transcribe/config.yaml`
+Configuration lives in `~/.transcribe/config.yaml` (created by `transcribe config`).
 
 ```yaml
+# Where to watch for new video files
 watch_directory: /Users/you/Movies
+
+# Where processed files are moved (a folder is created per video)
 destination_directory: /Users/you/Library/Mobile Documents/com~apple~CloudDocs/Movies
+
+# LLM provider for summaries/titles/action items: "claude" (default) or "openai"
+llm_provider: claude
+
+# Anthropic (Claude) settings — used when llm_provider is "claude" (default)
+# Get a key at https://console.anthropic.com/
+anthropic_api_key: sk-ant-...
+anthropic_model: claude-haiku-4-5-20251001
+
+# OpenAI settings — used when llm_provider is "openai"
 openai_api_key: sk-...
-slack_webhook_url: https://hooks.slack.com/services/...
+openai_model: gpt-4o-mini
+
+# Slack notification (optional) — webhook URL or a bot token + channel id
+slack_webhook_url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+# slack_bot_token: xoxb-...
+# slack_channel_id: C01234567890
+
+# Video extensions to process
 video_extensions:
   - .mov
   - .mp4
   - .avi
   - .mkv
   - .m4v
+
+# Whisper ggml model name -> ggml-<name>.bin; auto-downloaded to ~/.whisper-models/ if missing
+whisper_model: base
+
+# Optional iCloud base URL for links in Slack messages
 icloud_base_url: https://www.icloud.com/iclouddrive/
 ```
 
-### Getting API Keys
+A documented template is in [`config.example.yaml`](config.example.yaml).
 
-**OpenAI API Key:**
-1. Go to https://platform.openai.com/api-keys
-2. Create a new API key
-3. Add to config file
+### Key settings
 
-**Slack Webhook:**
-1. Go to https://api.slack.com/messaging/webhooks
-2. Create an incoming webhook
-3. Choose the channel for notifications
-4. Add webhook URL to config file
+| Key | Default | Notes |
+| --- | --- | --- |
+| `llm_provider` | `claude` | `claude` (Anthropic) or `openai`. |
+| `anthropic_api_key` | _(empty)_ | Required when `llm_provider` is `claude`. From <https://console.anthropic.com/>. |
+| `anthropic_model` | `claude-haiku-4-5-20251001` | Anthropic model id. |
+| `openai_api_key` | _(empty)_ | Required when `llm_provider` is `openai`. From <https://platform.openai.com/api-keys>. |
+| `openai_model` | `gpt-4o-mini` | OpenAI model id. |
+| `whisper_model` | `base` | `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` (and `.en` variants). Auto-downloaded if missing. |
 
-## Usage Examples
+If no key is set for the selected provider, summarization is skipped gracefully — you still
+get the transcript.
+
+## Usage
 
 ```bash
 # Transcribe a single file
 transcribe meeting.mov
 
-# Watch a directory manually
-transcribe watch ~/Desktop/Videos
+# Also write a machine-readable JSON result next to the outputs
+transcribe meeting.mov --json
 
-# Setup background daemon
+# Watch a directory in the foreground (Ctrl+C to stop)
+transcribe watch ~/Movies
+
+# Install the background daemon (recommended) and start it
 transcribe setup-daemon
+launchctl load ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
 
-# View current configuration
+# Show / locate configuration
 transcribe config
 
-# Stop the daemon
-launchctl unload ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
+# Version
+transcribe --version
 ```
 
-## Output Files
+### Output
 
-For each video file, three files are created:
+For a video named `meeting.mov`, processing produces:
 
-1. **`video.mov`** - Original video
-2. **`video_transcript.txt`** - Full transcription
-3. **`video_summary.txt`** - AI-generated summary with timestamps and action items
-
-All files are moved to your configured destination directory (e.g., iCloud).
-
-## Whisper Model Options
-
-By default, the `base` model is used. You can download other models:
-
-- `tiny` - Fastest, least accurate
-- `base` - Balanced (default)
-- `small` - Better accuracy
-- `medium` - Very good accuracy
-- `large` - Best accuracy, slowest
-
-## Requirements
-
-- macOS
-- Python 3.9+
-- ffmpeg
-- whisper-cpp
-- OpenAI API key (optional, for summarization)
-- Slack webhook (optional, for notifications)
-
-## Troubleshooting
-
-**See the [Full Installation Guide](INSTALL.md#troubleshooting)** for detailed troubleshooting steps.
-
-Quick checks:
-
-```bash
-# Check daemon status
-launchctl list | grep transcribe
-
-# View logs
-tail -f ~/Library/Logs/transcribe.log
-
-# Verify model exists
-ls -lh ~/.whisper-models/ggml-base.bin
-
-# Restart daemon
-launchctl unload ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
-launchctl load ~/Library/LaunchAgents/com.calebsargeant.transcribe.plist
 ```
+destination_directory/meeting/
+├── meeting.mov              # original video
+├── meeting_transcript.txt   # full transcription
+└── meeting_summary.txt      # LLM summary (if a provider key is set)
+```
+
+With `--json`, a `meeting_result.json` (title, description, transcript, summary, action
+items, source path) is also written.
+
+## Whisper models
+
+`whisper_model` accepts `tiny`, `base` (default), `small`, `medium`, `large-v3`, or
+`large-v3-turbo` (plus the English-only `.en` variants of the smaller models) — larger is
+more accurate but slower. Note there is no bare `large`; use a versioned name such as
+`large-v3`. The matching `ggml-<name>.bin` is downloaded automatically to
+`~/.whisper-models/` on first use.
 
 ## Privacy
 
-- Video transcription happens **locally** using whisper-cpp
-- Only the text transcript is sent to OpenAI for summarization (if enabled)
-- Original videos never leave your machine (except when moved to iCloud)
+- Transcription runs **locally** via `whisper-cpp`; videos never leave your machine.
+- Only the **text transcript** is sent to the LLM provider (Claude or OpenAI) for
+  summarization, and only if a key is configured.
+
+## Documentation
+
+- [docs/install.md](docs/install.md) — full install, API keys, Slack, Google Drive,
+  upgrade, uninstall, troubleshooting.
+- [docs/daemon.md](docs/daemon.md) — daemon setup, log inspection, and testing.
+- [docs/architecture.md](docs/architecture.md) — pipeline, data flow, modules, security.
+- [docs/release.md](docs/release.md) — release and Homebrew-tap process.
+- [CHANGELOG.md](CHANGELOG.md) — version history.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

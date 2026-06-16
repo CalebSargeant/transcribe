@@ -3,22 +3,34 @@
 block_cipher = None
 
 a = Analysis(
-    ['transcribe.py'],
-    pathex=[],
+    ['src/transcribe/__main__.py'],
+    pathex=['src'],
     binaries=[],
     datas=[
-        ('models', 'models'),  # Include models directory
+        ('models', 'models'),  # Include models directory at the bundle root
     ],
     hiddenimports=[
+        'transcribe',
+        'transcribe.cli',
+        'transcribe.config',
+        'transcribe.daemon',
+        'transcribe.gdrive',
+        'transcribe.llm',
+        'transcribe.processing',
+        'transcribe.slack',
+        'transcribe.tls',
+        'transcribe.watch',
+        'transcribe.whisper',
         'yaml',
         'watchdog',
         'watchdog.observers',
         'watchdog.events',
+        'anthropic',
         'openai',
         'requests',
-        'google.auth',
-        'googleapiclient.discovery',
-        'googleapiclient.errors',
+        # gdrive (google.auth / googleapiclient) is intentionally NOT bundled:
+        # the release build omits the gdrive extra and falls back to file://
+        # links, so listing those imports here only produces build ERRORs.
     ],
     hookspath=[],
     hooksconfig={},

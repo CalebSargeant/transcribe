@@ -30,29 +30,26 @@ jobs:
       id-token: write
 
   build:
-    name: Build binaries on ${{ matrix.os }} - ${{ matrix.arch }}
+    name: Build binary on ${{ matrix.runner }} (${{ matrix.arch }})
     needs: semantic-release
     if: needs.semantic-release.outputs.released == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
+        # macOS-only tool. macos-13 (the last Intel runner) is deprecated/removed,
+        # so we build on the two current Apple-Silicon runners. Both are arm64; the
+        # macos-15 build is the published release asset, macos-14 is kept as a
+        # backwards-compat build so we catch macOS-version regressions before users.
         include:
-          - os: macos
+          - runner: macos-15
             arch: arm64
-            runner: macos-14
             artifact_name: transcribe-macos-arm64
-          - os: macos
-            arch: x86_64
-            runner: macos-13
-            artifact_name: transcribe-macos-x86_64
-          - os: linux
-            arch: x86_64
-            runner: ubuntu-latest
-            artifact_name: transcribe-linux-x86_64
-          - os: linux
+            publish: 'true'
+          - runner: macos-14
             arch: arm64
-            runner: ubuntu-latest
-            artifact_name: transcribe-linux-arm64
+            artifact_name: transcribe-macos-arm64-macos14
+            publish: 'false'
 
     steps:
       - name: Checkout
@@ -60,20 +57,19 @@ jobs:
         with:
           ref: ${{ needs.semantic-release.outputs.tag }}
 
-      - name: Set up Python
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
+          uv sync
+          uv pip install pyinstaller
 
       - name: Build executable
         run: |
-          pyinstaller --clean transcribe.spec
+          uv run pyinstaller --clean transcribe.spec
 
       - name: Rename executable
         run: |
@@ -101,9 +97,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Download all artifacts
+      - name: Download published artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
+          name: transcribe-macos-arm64
           path: dist
 
       - name: Display structure
@@ -112,12 +109,8 @@ jobs:
       - name: Calculate SHA256 checksums
         run: |
           cd dist
-          for dir in */; do
-            cd "$dir"
-            for file in transcribe-*; do
-              sha256sum "$file" >> ../SHA256SUMS
-            done
-            cd ..
+          for file in transcribe-*; do
+            sha256sum "$file" >> SHA256SUMS
           done
           cat SHA256SUMS
 
@@ -127,52 +120,35 @@ jobs:
           tag_name: ${{ needs.semantic-release.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            dist/transcribe-macos-arm64/transcribe-macos-arm64
-            dist/transcribe-macos-x86_64/transcribe-macos-x86_64
-            dist/transcribe-linux-x86_64/transcribe-linux-x86_64
-            dist/transcribe-linux-arm64/transcribe-linux-arm64
+            dist/transcribe-macos-arm64
             dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  update-homebrew-tap:
-    name: Update Homebrew tap checksums
+  # Event-driven Homebrew bump (mirrors MagmaMoose/chargate's release.yaml): when a
+  # stable release is cut, open a PR on the tap bumping the transcribe formula to the
+  # new tag (url + sha256 recomputed). Replaces the old bespoke job that dispatched
+  # the tap's update-sha256 workflow. Requires HOMEBREW_TAP_TOKEN — a fine-grained PAT
+  # on MagmaMoose/homebrew-tap with Contents + Pull requests: write.
+  bump-homebrew:
+    name: Bump Homebrew tap formula
     needs: [semantic-release, build, upload]
     if: needs.semantic-release.outputs.released == 'true'
-    runs-on: ubuntu-latest
-
+    runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
-      - name: Compute formula version from tag
-        id: version
-        run: |
-          tag='${{ needs.semantic-release.outputs.tag }}'
-          version="${tag#v}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Generate GitHub App token
-        id: app-token
-        uses: tibdex/github-app-token@v2
+      # Homebrew 6.x refuses to load formulae from untrusted third-party taps when
+      # HOMEBREW_REQUIRE_TAP_TRUST is set (it is, on the runner). dawidd6 *clones* the
+      # tap, so trust it by name before the bump or `brew bump-formula-pr` aborts with
+      # Homebrew::UntrustedTapError.
+      - name: Trust the MagmaMoose tap
+        run: brew trust --tap magmamoose/tap
+      - name: Bump transcribe formula in the tap
+        uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
         with:
-          app_id: ${{ secrets.RELEASE_APP_ID }}
-          private_key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-
-      - name: Trigger SHA256 update workflow in homebrew-tap
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "GitHub App token not available; skipping Homebrew tap SHA update."
-            exit 0
-          fi
-
-          if [ -z "$VERSION" ]; then
-            echo "VERSION not computed; skipping Homebrew tap SHA update."
-            exit 0
-          fi
-
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/CalebSargeant/homebrew-tap/actions/workflows/update-sha256.yml/dispatches \
-            -d "{\"ref\":\"main\",\"inputs\":{\"formula\":\"transcribe\",\"version\":\"$VERSION\"}}"
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          tap: MagmaMoose/homebrew-tap
+          formula: transcribe
+          tag: ${{ needs.semantic-release.outputs.tag }}
+          no_fork: true   # push the bump branch straight to the tap (don't fork)

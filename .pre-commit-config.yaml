@@ -1,0 +1,15 @@
+# chargate's consolidated pre-commit hooks — the fast, local first line that
+# coexists with the broad CI gate (.github/workflows/chargate.yml).
+#
+#   actions-pin-sha          pin `uses:` refs to a full SHA + `# vX` comment
+#   conventional-branch-name block pushes from non-conventional branch names
+#   chargate                 fast staged-file secret + lint scan (gitleaks, ruff)
+#
+# Pinned to the floating major tag v2, matching the gate.yml workflow pin.
+repos:
+  - repo: https://github.com/MagmaMoose/chargate
+    rev: v2
+    hooks:
+      - id: actions-pin-sha
+      - id: conventional-branch-name
+      - id: chargate

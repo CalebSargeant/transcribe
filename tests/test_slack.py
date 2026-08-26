@@ -5,7 +5,6 @@ import types
 
 import pytest
 
-from transcribe import slack
 from transcribe.slack import send_slack_notification
 
 
@@ -34,8 +33,10 @@ def fake_requests(monkeypatch):
 
 @pytest.fixture
 def no_gdrive(monkeypatch):
-    """Force the Google Drive lookup to return None so we hit the file:// fallback."""
-    monkeypatch.setattr(slack, "get_google_drive_folder_url", lambda p: None)
+    """Force the Google Drive lookup to fail, leaving no linkable URL."""
+    monkeypatch.setattr(
+        "transcribe.gdrive.get_google_drive_folder_url", lambda p: None, raising=False
+    )
 
 
 def test_webhook_payload_shape(fake_requests, no_gdrive, base_config):
@@ -59,10 +60,12 @@ def test_webhook_payload_shape(fake_requests, no_gdrive, base_config):
     assert blocks[0]["type"] == "header"
     assert blocks[0]["text"]["text"] == "My Title"
 
-    # Section contains description + the file:// fallback link.
+    # Section contains the description and the folder path. A plain local path
+    # has no linkable URL, and file:// is never emitted: Slack renders it dead.
     section_text = blocks[1]["text"]["text"]
     assert "My description." in section_text
-    assert "file://" in section_text
+    assert "`/dest/video`" in section_text
+    assert "file://" not in section_text
 
     # Action-items section present with bulleted items.
     action_block = blocks[2]["text"]["text"]
@@ -128,13 +131,37 @@ def test_no_credentials_warns_and_skips(fake_requests, no_gdrive, base_config, c
 def test_uses_google_drive_link_when_available(fake_requests, monkeypatch, base_config):
     base_config["slack_webhook_url"] = "https://hooks.slack.com/abc"
     monkeypatch.setattr(
-        slack,
-        "get_google_drive_folder_url",
+        "transcribe.gdrive.get_google_drive_folder_url",
         lambda p: "https://drive.google.com/drive/folders/XYZ",
+        raising=False,
     )
-    send_slack_notification("v.mov", "/d/v", "T", "D", [], base_config)
+    send_slack_notification(
+        "v.mov", "/Users/x/Google Drive/My Drive/Meetings/v", "T", "D", [], base_config
+    )
     section_text = fake_requests["posts"][0]["json"]["blocks"][1]["text"]["text"]
-    assert "https://drive.google.com/drive/folders/XYZ" in section_text
+    assert (
+        "<https://drive.google.com/drive/folders/XYZ|Open folder in Google Drive>" in section_text
+    )
+
+
+def test_icloud_folder_links_to_icloud_drive(fake_requests, base_config):
+    """iCloud has no path-addressable URL, so the link lands in iCloud Drive."""
+    base_config["slack_webhook_url"] = "https://hooks.slack.com/abc"
+    folder = "/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Meetings/Standup"
+    send_slack_notification("v.mov", folder, "T", "D", [], base_config)
+    section_text = fake_requests["posts"][0]["json"]["blocks"][1]["text"]["text"]
+    assert "https://www.icloud.com/iclouddrive/" in section_text
+    assert "Open iCloud Drive" in section_text
+    # The folder name is still shown, since the link cannot point at it.
+    assert "Standup" in section_text
+    assert "file://" not in section_text
+
+
+def test_message_carries_fallback_text_for_notifications(fake_requests, no_gdrive, base_config):
+    """blocks-only messages show as 'This content can't be displayed' in alerts."""
+    base_config["slack_webhook_url"] = "https://hooks.slack.com/abc"
+    send_slack_notification("v.mov", "/d/v", "My Title", "D", [], base_config)
+    assert fake_requests["posts"][0]["json"]["text"] == "My Title"
 
 
 def test_success_prints_confirmation(fake_requests, no_gdrive, base_config, capsys):

@@ -200,7 +200,7 @@ Configuration lives in `~/.transcribe/config.yaml`. A fully documented template 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `watch_directory` | `~/Movies` | Where new recordings appear. |
-| `destination_directory` | iCloud Movies | One folder per meeting is created here. |
+| `destination_directory` | iCloud Movies | One folder per meeting is created here. iCloud Drive and Google Drive are both recognised. |
 | `llm_provider` | `claude` | `claude` (Anthropic) or `openai`. |
 | `anthropic_api_key` | _(empty)_ | Required when provider is `claude`. |
 | `anthropic_model` | `claude-haiku-4-5-20251001` | Anthropic model id. |
@@ -247,6 +247,15 @@ You are only charged for what is actually generated. If notes come back empty, r
 
 Everything degrades gracefully: a missing extra disables its feature and prints a note,
 it never fails the run.
+
+### Links in Slack
+
+Google Drive exposes folder ids through its API, so a notification deep-links straight to
+the meeting's folder. **iCloud Drive has no path-addressable web URL** — a share link is
+minted by a person sharing an item, and no API can create one — so the link goes to iCloud
+Drive itself and the folder path is shown beside it.
+
+`file://` is never emitted: Slack does not linkify it, so it renders as dead text.
 
 ## Privacy
 

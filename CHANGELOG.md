@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Timestamped transcripts** with per-segment times and speaker labels.
 - **Calendar integration** (macOS EventKit) for real meeting titles and attendee lists.
 - **HTML notes output** alongside Markdown and JSON.
+- Slack notifications link to the destination folder's storage. Google Drive deep-links to
+  the folder; iCloud Drive links to iCloud Drive, because it has no path-addressable web
+  URL. `file://` is no longer emitted at all -- Slack does not linkify it, so it rendered
+  as dead text. Messages now also carry fallback text, so a phone notification shows the
+  meeting title rather than "This content can't be displayed".
 - **Per-meeting video clips**, cut losslessly with stream copy.
 - `scripts/transcribe-dev` — runs a local checkout alongside the Homebrew release, so
   `transcribe` stays the released build while `transcribe-dev` is the working tree.

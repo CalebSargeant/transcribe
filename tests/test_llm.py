@@ -260,17 +260,49 @@ def test_client_options_have_defaults(fake_anthropic, base_config):
     assert options["max_retries"] == 2
 
 
-def test_complete_json_reports_reasoning_model_truncation(fake_openai, base_config, capsys):
-    """A reasoning model that spends its budget thinking returns empty content.
+def test_complete_json_retries_once_when_truncated(fake_openai, base_config, capsys):
+    """Hitting the output cap is recoverable, so it earns one retry with more room."""
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+    fake_openai["set_content"](None)  # empty content + finish_reason="length"
 
-    Surfacing that as its own message beats an opaque JSON parse error.
-    """
+    assert complete_json(base_config, "sys", "user", {"type": "object"}, max_tokens=1000) is None
+
+    out = capsys.readouterr().out
+    assert "ran out of output budget" in out
+    assert "retrying with 2000 tokens" in out
+    # Two attempts: the original and the retry.
+    assert len(fake_openai["calls"]) == 2
+    assert fake_openai["calls"][1]["max_tokens"] == 2000
+
+
+def test_complete_json_succeeds_on_the_retry(fake_openai, base_config):
+    """A bigger budget on the second attempt is the whole point of retrying."""
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+
+    attempts = {"n": 0}
+    original = fake_openai["set_content"]
+
+    def content_for_attempt():
+        attempts["n"] += 1
+        return None if attempts["n"] == 1 else '{"title": "Recovered"}'
+
+    # First call truncates, second returns valid JSON.
+    fake_openai["set_content_factory"](content_for_attempt)
+    assert complete_json(base_config, "s", "u", {"type": "object"}) == {"title": "Recovered"}
+    assert original is not None
+
+
+def test_truncated_completion_is_not_reported_as_a_parse_error(fake_openai, base_config, capsys):
+    """Truncation used to surface as JSONDecodeError, which named the wrong cause."""
     base_config["llm_provider"] = "openai"
     base_config["openai_api_key"] = "k"
     fake_openai["set_content"](None)
 
-    assert complete_json(base_config, "sys", "user", {"type": "object"}) is None
-    assert "notes_max_tokens" in capsys.readouterr().out
+    complete_json(base_config, "s", "u", {"type": "object"})
+    out = capsys.readouterr().out
+    assert "JSONDecodeError" not in out
 
 
 def test_complete_json_returns_parsed_object(fake_openai, base_config):

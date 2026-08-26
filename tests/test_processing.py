@@ -100,8 +100,15 @@ def test_move_files_skips_missing_transcript(tmp_path, base_config):
 # --- process_video_file -----------------------------------------------------
 
 
-def _patch_pipeline(monkeypatch, transcript="hello transcript"):
-    """Stub transcription + Slack so process_video_file is pure-filesystem."""
+def _patch_pipeline(monkeypatch, transcript="hello transcript", config=None):
+    """Stub transcription + Slack so process_video_file is pure-filesystem.
+
+    Selects the legacy flat pipeline: these tests cover the single-transcript
+    behaviour kept behind ``meeting_mode: false``. The meeting-aware pipeline is
+    covered in test_meetings.py.
+    """
+    if config is not None:
+        config["meeting_mode"] = False
     monkeypatch.setattr(processing, "transcribe_video", lambda v, c: transcript)
     slack_calls = []
     monkeypatch.setattr(
@@ -113,7 +120,7 @@ def _patch_pipeline(monkeypatch, transcript="hello transcript"):
 
 
 def test_process_writes_transcript_and_moves(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch)
+    _patch_pipeline(monkeypatch, config=base_config)
     dest = tmp_path / "dest"
     dest.mkdir()
     base_config["destination_directory"] = str(dest)
@@ -134,7 +141,7 @@ def test_process_writes_transcript_and_moves(monkeypatch, tmp_path, base_config)
 
 
 def test_process_skips_llm_when_unconfigured(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch)
+    _patch_pipeline(monkeypatch, config=base_config)
     called = []
     monkeypatch.setattr(processing, "summarize_with_openai", lambda *a, **k: called.append("sum"))
     monkeypatch.setattr(
@@ -162,7 +169,7 @@ def test_process_skips_llm_when_unconfigured(monkeypatch, tmp_path, base_config)
 
 
 def test_process_runs_llm_when_configured(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch)
+    _patch_pipeline(monkeypatch, config=base_config)
     monkeypatch.setattr(processing, "summarize_with_openai", lambda *a, **k: "the summary")
     monkeypatch.setattr(
         processing,
@@ -185,7 +192,7 @@ def test_process_runs_llm_when_configured(monkeypatch, tmp_path, base_config):
 
 
 def test_process_sends_slack_when_configured(monkeypatch, tmp_path, base_config):
-    slack_calls = _patch_pipeline(monkeypatch)
+    slack_calls = _patch_pipeline(monkeypatch, config=base_config)
     monkeypatch.setattr(processing, "summarize_with_openai", lambda *a, **k: "s")
     monkeypatch.setattr(
         processing,
@@ -214,7 +221,7 @@ def test_process_sends_slack_when_configured(monkeypatch, tmp_path, base_config)
 
 
 def test_process_writes_json_when_requested(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch, transcript="full transcript text")
+    _patch_pipeline(monkeypatch, transcript="full transcript text", config=base_config)
     monkeypatch.setattr(processing, "summarize_with_openai", lambda *a, **k: "summary!")
     monkeypatch.setattr(
         processing,
@@ -253,7 +260,7 @@ def test_process_writes_json_when_requested(monkeypatch, tmp_path, base_config):
 
 
 def test_process_writes_json_at_source_when_no_destination(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch, transcript="t")
+    _patch_pipeline(monkeypatch, transcript="t", config=base_config)
     # No destination configured -> JSON falls back to the source location.
     base_config["destination_directory"] = ""
     base_config["anthropic_api_key"] = ""
@@ -271,7 +278,7 @@ def test_process_writes_json_at_source_when_no_destination(monkeypatch, tmp_path
 
 
 def test_process_no_json_by_default(monkeypatch, tmp_path, base_config):
-    _patch_pipeline(monkeypatch)
+    _patch_pipeline(monkeypatch, config=base_config)
     dest = tmp_path / "dest"
     dest.mkdir()
     base_config["destination_directory"] = str(dest)
@@ -295,6 +302,7 @@ def test_process_loads_config_when_none(monkeypatch, tmp_path):
             "destination_directory": "",
             "llm_provider": "claude",
             "anthropic_api_key": "",
+            "meeting_mode": False,
         }
 
     monkeypatch.setattr(processing, "load_config", fake_load)

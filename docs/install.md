@@ -29,6 +29,29 @@ brew install magmamoose/tap/transcribe
 
 `whisper-cpp` and `ffmpeg` are installed automatically as dependencies.
 
+## 1b. Optional features
+
+Speaker attribution and calendar lookup are optional Python extras. Install them into the
+same interpreter the `transcribe` command uses:
+
+```bash
+pip install 'transcribe[diarize,calendar]'
+```
+
+| Extra | Installs | Enables |
+| --- | --- | --- |
+| `diarize` | `sherpa-onnx`, `numpy` | Telling speakers apart (~46 MB of models, no PyTorch) |
+| `calendar` | `pyobjc-framework-EventKit` | Meeting titles and attendee lists from Calendar |
+| `gdrive` | `google-auth`, `google-api-python-client` | Google Drive folder links in Slack |
+| `all` | all of the above | |
+
+Everything degrades gracefully: a missing extra disables its feature and prints a note, it
+never fails the run. Check what is active with:
+
+```bash
+transcribe doctor
+```
+
 ## 2. Whisper model (automatic)
 
 The Whisper ggml model is **downloaded automatically** the first time you transcribe, to
@@ -123,6 +146,50 @@ Transcribe defaults to **Claude**. Set `llm_provider` to switch.
 
 **Cost:** roughly $0.01–0.05 per video for summarization, depending on length and model.
 
+### A gateway, or a local model
+
+`openai_base_url` points the `openai` provider at anything speaking the OpenAI API:
+
+```yaml
+llm_provider: openai
+openai_base_url: https://litellm.example.com   # LiteLLM gateway
+# openai_base_url: http://localhost:11434/v1   # Ollama
+openai_api_key: sk-your-gateway-key
+openai_model: deepseek-v4-pro
+```
+
+Reasoning models bill their chain of thought as completion tokens and return empty content
+if they run out mid-thought. The defaults (`boundary_max_tokens: 8000`,
+`speaker_max_tokens: 8000`, `notes_max_tokens: 16000`) allow for this; raise them if notes
+come back empty. You are only charged for tokens actually generated.
+
+## 4b. Calendar access (optional)
+
+Reading your calendar gives real meeting titles and attendee names. Attendee names matter
+more than they sound: they let speaker attribution pin the number of voices and give the
+naming step a roster to match against.
+
+The macOS source reads whatever accounts Calendar.app already syncs — Google and Exchange
+included — so there is no second sign-in.
+
+macOS asks for permission the first time. **A launchd daemon has no UI to show that
+prompt**, so grant it once from a normal terminal:
+
+```bash
+transcribe calendar-check
+```
+
+Approve the prompt. The command then lists your next few events to confirm it works. If
+you see `access denied`, enable Transcribe (or your terminal) under **System Settings →
+Privacy & Security → Calendars** and run it again.
+
+If no events are listed, check that Calendar.app actually has your accounts added — a
+Google Calendar used only in a browser will not appear.
+
+Direct Google Calendar and Microsoft 365 sources are tracked as
+[issue #4](https://github.com/CalebSargeant/transcribe/issues/4) and
+[issue #5](https://github.com/CalebSargeant/transcribe/issues/5).
+
 ## 5. Slack notifications (optional)
 
 Choose **one** method.
@@ -182,17 +249,27 @@ See **[daemon.md](daemon.md)** for the background `launchd` agent.
 
 ## Output
 
-After processing `meeting.mov`:
+Each meeting gets its own folder in `destination_directory`, named by date and meeting
+title:
 
 ```
-destination_directory/meeting/
-├── meeting.mov              # original video
-├── meeting_transcript.txt   # full transcription
-└── meeting_summary.txt      # LLM summary (if a provider key is set)
+Meetings/
+├── 2026-08-25 1028 Camera subnet routing fixes/
+│   ├── notes.md                 # summary, decisions, next steps, timestamped details
+│   ├── notes.html               # the same notes as a standalone page
+│   ├── notes.json               # machine-readable: notes plus every segment
+│   ├── transcript.txt           # timestamped, grouped by speaker
+│   ├── summary.txt              # the one-paragraph summary on its own
+│   └── 2026-08-25 1028 ....mov  # this meeting's slice of the recording
+└── Source recordings/
+    └── 2026-08-25 09-34-17.mov  # the original, kept intact
 ```
 
-With `--json`, a `meeting_result.json` is also written, containing the title, description,
-transcript, summary, action items, and source file path.
+When a recording contains only one meeting, the original recording is filed in that
+meeting's folder and no clip is cut.
+
+To keep the old behaviour — one transcript and one summary per file, in a folder named
+after the video — use `--flat`, or set `meeting_mode: false` in the config.
 
 ## Upgrading
 
@@ -268,6 +345,49 @@ Or rely on the `file://` fallback for local access.
 ### Daemon not starting automatically
 
 See [daemon.md](daemon.md#troubleshooting).
+
+### Transcript is mostly "Thank you." or repeated filler
+
+Voice Activity Detection is off. Recordings usually contain a floor of room tone rather
+than digital silence, and fed that, Whisper hallucinates filler and can lock into a
+repetition loop that ruins the rest of the file. Set `whisper_vad: true` (the default).
+
+### Too many speakers on a long meeting
+
+Voice embeddings drift over a long call, so an hour-plus meeting tends to split one person
+into several clusters. The reliable fix is to tell it how many people were in the room,
+which pins the cluster count instead of inferring it:
+
+- Grant calendar access, so the attendee list is used automatically
+  (`transcribe calendar-check`), or
+- List the regulars in `known_participants`.
+
+Failing that, raise `diarization_threshold` (0.8 → 0.9) to merge more aggressively.
+
+### Speakers all show as "Speaker 1", "Speaker 2"
+
+Diarization separated the voices but could not name them. Names are only applied when the
+transcript supports them — a wrong name is worse than no name. To improve it:
+
+- Grant calendar access so the attendee list is available (`transcribe calendar-check`).
+- Or list the regulars in `known_participants` in your config.
+
+### Speaker attribution missing entirely
+
+`transcribe doctor` will say if `sherpa-onnx` or `numpy` is missing. Install with
+`pip install 'transcribe[diarize]'`.
+
+### One recording was split into the wrong number of meetings
+
+- `--no-split` forces the whole recording to be treated as one meeting.
+- Raise `meeting_gap_seconds` to make silence-based splitting less eager.
+- Grant calendar access: real event boundaries beat inference.
+
+### Diarization uses a lot of memory on very long meetings
+
+Audio for a meeting is held in memory while voices are clustered, at roughly 4 MB per
+minute. A three-hour single meeting needs about 800 MB. Splitting into real meetings keeps
+this well below that; `diarization_enabled: false` turns it off entirely.
 
 ## Tips
 

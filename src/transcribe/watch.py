@@ -1,11 +1,54 @@
 """Directory watching via watchdog."""
 
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 from .processing import process_video_file
+
+# How long a file's size must stay unchanged before it counts as finished.
+STABLE_SECONDS = 10
+STABLE_POLL_SECONDS = 5
+# Give up waiting after this long rather than blocking the watcher forever.
+STABLE_TIMEOUT_SECONDS = 12 * 60 * 60
+
+
+def wait_until_stable(
+    file_path,
+    stable_seconds=STABLE_SECONDS,
+    poll_seconds=STABLE_POLL_SECONDS,
+    timeout=STABLE_TIMEOUT_SECONDS,
+):
+    """Block until ``file_path`` stops growing, then return True.
+
+    A recorder creates its file at the *start* of the meeting and keeps writing
+    for as long as it runs, so the creation event can arrive hours before the
+    recording is complete. Waiting a fixed couple of seconds would transcribe an
+    empty file.
+    """
+    deadline = time.monotonic() + timeout
+    last_size = -1
+    unchanged_for = 0.0
+
+    while time.monotonic() < deadline:
+        try:
+            size = os.path.getsize(file_path)
+        except OSError:
+            return False  # deleted or moved while we waited
+
+        if size == last_size and size > 0:
+            unchanged_for += poll_seconds
+            if unchanged_for >= stable_seconds:
+                return True
+        else:
+            unchanged_for = 0.0
+            last_size = size
+        time.sleep(poll_seconds)
+
+    print(f"Warning: {Path(file_path).name} still growing after {timeout / 3600:.0f}h", flush=True)
+    return False
 
 
 def watch_directory(directory, config):
@@ -36,23 +79,19 @@ def watch_directory(directory, config):
             file_ext = Path(file_path).suffix.lower()
 
             # Check if it's a video file
-            if file_ext in config.get("video_extensions", [".mov", ".mp4"]):
+            if file_ext in self.config.get("video_extensions", [".mov", ".mp4"]):
                 # Avoid processing the same file multiple times
                 if file_path in self.processing:
                     return
 
                 self.processing.add(file_path)
-
-                # Wait a bit to ensure file is fully written
-                print(f"Detected new file: {Path(file_path).name}", flush=True)
-                print("Waiting for file to finish writing...", flush=True)
-                time.sleep(2)
-
-                # Check if file still exists and is accessible
-                if Path(file_path).exists():
-                    process_video_file(file_path, self.config)
-
-                self.processing.discard(file_path)
+                try:
+                    print(f"Detected new file: {Path(file_path).name}", flush=True)
+                    print("Waiting for the recording to finish writing...", flush=True)
+                    if wait_until_stable(file_path) and Path(file_path).exists():
+                        process_video_file(file_path, self.config)
+                finally:
+                    self.processing.discard(file_path)
 
     print(f"Watching directory: {directory}", flush=True)
     print(f"Video extensions: {', '.join(config.get('video_extensions', []))}", flush=True)

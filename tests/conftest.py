@@ -68,7 +68,7 @@ class FakeAnthropicMessages:
 
 
 class FakeAnthropicClient:
-    def __init__(self, recorder, blocks, api_key=None):
+    def __init__(self, recorder, blocks, api_key=None, **options):
         self.api_key = api_key
         self.messages = FakeAnthropicMessages(recorder, blocks)
 
@@ -81,11 +81,17 @@ def fake_anthropic(monkeypatch):
     ``init_keys`` (api_keys passed to the client), and ``set_text`` to control
     the returned text blocks.
     """
-    state = {"calls": [], "init_keys": [], "blocks": [FakeTextBlock("default")]}
+    state = {
+        "calls": [],
+        "init_keys": [],
+        "init_options": [],
+        "blocks": [FakeTextBlock("default")],
+    }
 
-    def _client_factory(api_key=None):
+    def _client_factory(api_key=None, **options):
         state["init_keys"].append(api_key)
-        return FakeAnthropicClient(state["calls"], state["blocks"], api_key=api_key)
+        state["init_options"].append(options)
+        return FakeAnthropicClient(state["calls"], state["blocks"], api_key=api_key, **options)
 
     fake_mod = types.ModuleType("anthropic")
     fake_mod.Anthropic = _client_factory
@@ -107,8 +113,11 @@ class FakeChoiceMessage:
 
 
 class FakeChoice:
-    def __init__(self, content):
+    def __init__(self, content, finish_reason="stop"):
         self.message = FakeChoiceMessage(content)
+        # Reasoning models return empty content with finish_reason="length"
+        # when they spend the whole budget thinking.
+        self.finish_reason = "length" if content is None else finish_reason
 
 
 class FakeOpenAIResponse:
@@ -132,7 +141,7 @@ class FakeOpenAIChat:
 
 
 class FakeOpenAIClient:
-    def __init__(self, recorder, content, api_key=None):
+    def __init__(self, recorder, content, api_key=None, **options):
         self.api_key = api_key
         self.chat = FakeOpenAIChat(recorder, content)
 
@@ -140,11 +149,12 @@ class FakeOpenAIClient:
 @pytest.fixture
 def fake_openai(monkeypatch):
     """Install a fake ``openai`` module into sys.modules."""
-    state = {"calls": [], "init_keys": [], "content": "default"}
+    state = {"calls": [], "init_keys": [], "init_options": [], "content": "default"}
 
-    def _client_factory(api_key=None):
+    def _client_factory(api_key=None, **options):
         state["init_keys"].append(api_key)
-        return FakeOpenAIClient(state["calls"], state["content"], api_key=api_key)
+        state["init_options"].append(options)
+        return FakeOpenAIClient(state["calls"], state["content"], api_key=api_key, **options)
 
     fake_mod = types.ModuleType("openai")
     fake_mod.OpenAI = _client_factory

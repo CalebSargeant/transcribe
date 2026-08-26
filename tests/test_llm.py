@@ -4,6 +4,7 @@ from transcribe import llm
 from transcribe.llm import (
     _complete,
     _provider,
+    complete_json,
     extract_action_items_with_openai,
     generate_title_description_with_openai,
     summarize_with_openai,
@@ -212,3 +213,73 @@ def test_action_items_uses_openai_when_selected(fake_openai, base_config):
     assert extract_action_items_with_openai("t", base_config) == ["OpenAI task"]
     # Lower temperature for action-item extraction is preserved.
     assert fake_openai["calls"][0]["temperature"] == 0.3
+
+
+# --- client options: base URL, timeout, retries -----------------------------
+
+
+def test_openai_base_url_routes_to_compatible_endpoint(fake_openai, base_config):
+    """openai_base_url is how a LiteLLM gateway or Ollama gets used."""
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+    base_config["openai_base_url"] = "https://litellm.example.com"
+    summarize_with_openai("t", base_config)
+    assert fake_openai["init_options"][0]["base_url"] == "https://litellm.example.com"
+
+
+def test_openai_without_base_url_uses_provider_default(fake_openai, base_config):
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+    summarize_with_openai("t", base_config)
+    assert "base_url" not in fake_openai["init_options"][0]
+
+
+def test_anthropic_base_url_override(fake_anthropic, base_config):
+    base_config["anthropic_api_key"] = "k"
+    base_config["anthropic_base_url"] = "https://proxy.example.com"
+    summarize_with_openai("t", base_config)
+    assert fake_anthropic["init_options"][0]["base_url"] == "https://proxy.example.com"
+
+
+def test_timeout_and_retries_are_bounded(fake_anthropic, base_config):
+    """Left at SDK defaults, one stalled call can hold up a run for ~30 minutes."""
+    base_config["anthropic_api_key"] = "k"
+    base_config["llm_timeout_seconds"] = 120
+    base_config["llm_max_retries"] = 1
+    summarize_with_openai("t", base_config)
+    options = fake_anthropic["init_options"][0]
+    assert options["timeout"] == 120.0
+    assert options["max_retries"] == 1
+
+
+def test_client_options_have_defaults(fake_anthropic, base_config):
+    base_config["anthropic_api_key"] = "k"
+    summarize_with_openai("t", base_config)
+    options = fake_anthropic["init_options"][0]
+    assert options["timeout"] == 600.0
+    assert options["max_retries"] == 2
+
+
+def test_complete_json_reports_reasoning_model_truncation(fake_openai, base_config, capsys):
+    """A reasoning model that spends its budget thinking returns empty content.
+
+    Surfacing that as its own message beats an opaque JSON parse error.
+    """
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+    fake_openai["set_content"](None)
+
+    assert complete_json(base_config, "sys", "user", {"type": "object"}) is None
+    assert "notes_max_tokens" in capsys.readouterr().out
+
+
+def test_complete_json_returns_parsed_object(fake_openai, base_config):
+    base_config["llm_provider"] = "openai"
+    base_config["openai_api_key"] = "k"
+    fake_openai["set_content"]('{"title": "Routing review"}')
+    assert complete_json(base_config, "s", "u", {"type": "object"}) == {"title": "Routing review"}
+
+
+def test_complete_json_without_api_key_returns_none(base_config):
+    base_config["anthropic_api_key"] = ""
+    assert complete_json(base_config, "s", "u", {"type": "object"}) is None

@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Calendar integration** (macOS EventKit) for real meeting titles and attendee lists.
 - **HTML notes output** alongside Markdown and JSON.
 - **Per-meeting video clips**, cut losslessly with stream copy.
+- `scripts/transcribe-dev` — runs a local checkout alongside the Homebrew release, so
+  `transcribe` stays the released build while `transcribe-dev` is the working tree.
+  `TRANSCRIBE_DEV_REPO` points it at another checkout or a git worktree.
 - `transcribe doctor` — checks tools, models, keys, and permissions.
 - `transcribe calendar-check` — grants and verifies macOS Calendar access.
 - `--flat`, `--no-split`, and `--no-diarize` flags.

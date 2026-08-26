@@ -29,6 +29,37 @@ brew install magmamoose/tap/transcribe
 
 `whisper-cpp` and `ffmpeg` are installed automatically as dependencies.
 
+## 1a. Running a local checkout
+
+Homebrew installs a frozen PyInstaller build. To run the code you are editing without
+disturbing it, symlink the dev shim once:
+
+```bash
+ln -sf "$PWD/scripts/transcribe-dev" ~/.local/bin/transcribe-dev
+```
+
+`transcribe` is then the released version and `transcribe-dev` is your working tree.
+`TRANSCRIBE_DEV_REPO` points it at a different checkout or a git worktree:
+
+```bash
+TRANSCRIBE_DEV_REPO=/path/to/worktree transcribe-dev doctor
+```
+
+It needs [uv](https://docs.astral.sh/uv/) and uses the checkout's own virtualenv, so
+optional extras installed there are picked up automatically.
+
+### If `brew install` leaves no `transcribe` command
+
+The token `transcribe` collides with the unrelated **Transcribe!** cask (a commercial
+music-transcription app). When that cask is installed, Homebrew declines to link the
+formula and prints `transcribe cask is installed, skipping link`. Force the link:
+
+```bash
+brew link --overwrite magmamoose/tap/transcribe
+```
+
+The cask only installs an `.app`, so there is no actual binary conflict.
+
 ## 1b. Optional features
 
 Speaker attribution and calendar lookup are optional Python extras. Install them into the

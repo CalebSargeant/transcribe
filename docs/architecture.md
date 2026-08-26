@@ -224,6 +224,7 @@ src/transcribe/
 ├── processing.py    # pipeline orchestration and filing
 ├── watch.py         # watchdog directory watcher, file-stability wait
 ├── daemon.py        # launchd plist generation
+├── links.py         # resolves a linkable URL for a destination folder
 ├── slack.py         # Slack webhook / bot-token notifications
 ├── gdrive.py        # optional Google Drive folder URL resolution
 └── tls.py           # TLS CA bundle fixup for frozen binaries

@@ -2,14 +2,24 @@
 
 from datetime import datetime
 
-from .gdrive import get_google_drive_folder_url
+from .links import describe_location
+
+
+def _location_block(folder_path, config):
+    """Render where the meeting was filed, as a link when one is possible.
+
+    Slack does not linkify ``file://``, so a local path is shown as code rather
+    than as a link that renders dead.
+    """
+    url, label, local_path = describe_location(folder_path, config)
+    if url:
+        return f"<{url}|{label}>\n`{local_path}`"
+    return f"`{local_path}`"
 
 
 def send_slack_notification(video_name, folder_path, title, description, action_items, config):
-    """Send notification to Slack with Google Drive folder link and action items."""
+    """Send notification to Slack with a folder link and action items."""
     try:
-        import urllib.parse
-
         import requests
 
         # Check for bot token first, then webhook URL
@@ -24,23 +34,17 @@ def send_slack_notification(video_name, folder_path, title, description, action_
             )
             return
 
-        # Get Google Drive URL
-        folder_link = get_google_drive_folder_url(folder_path)
-
-        # Fall back to file:// if Drive API fails
-        if not folder_link:
-            folder_link = f"file://{urllib.parse.quote(str(folder_path))}"
-
-        # Use title from OpenAI or fallback to video name
+        # Use title from the LLM, or fall back to the file name
         header_text = title if title else f"📹 {video_name}"
 
+        body = description if description else "Video transcribed and summarized"
         blocks = [
             {"type": "header", "text": {"type": "plain_text", "text": header_text}},
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"{description if description else 'Video transcribed and summarized'}\n\n<{folder_link}|Open folder in Google Drive>",  # noqa: E501
+                    "text": f"{body}\n\n{_location_block(folder_path, config)}",
                 },
             },
         ]
@@ -72,14 +76,14 @@ def send_slack_notification(video_name, folder_path, title, description, action_
                     "Authorization": f"Bearer {bot_token}",
                     "Content-Type": "application/json",
                 },
-                json={"channel": channel_id, "blocks": blocks},
+                json={"channel": channel_id, "blocks": blocks, "text": header_text},
             )
             result = response.json()
             if not result.get("ok"):
                 raise Exception(f"Slack API error: {result.get('error')}")
         else:
             # Use webhook
-            response = requests.post(webhook_url, json={"blocks": blocks})
+            response = requests.post(webhook_url, json={"blocks": blocks, "text": header_text})
             response.raise_for_status()
 
         print("✓ Slack notification sent")

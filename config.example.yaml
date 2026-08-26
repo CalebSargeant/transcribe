@@ -5,6 +5,8 @@
 watch_directory: /Users/yourusername/Movies
 
 # Destination directory. One folder per meeting is created here.
+# iCloud Drive and Google Drive are both recognised; the Slack link adapts to
+# whichever the destination lives in.
 destination_directory: /Users/yourusername/Library/Mobile Documents/com~apple~CloudDocs/Meetings
 
 # LLM provider for notes, summaries, titles, and action items.
@@ -121,5 +123,8 @@ calendar_enabled: true
 calendar_source: macos
 calendar_margin_minutes: 15
 
-# Optional iCloud base URL for links in Slack messages
+# Where a Slack "Open iCloud Drive" link points. iCloud Drive has no
+# path-addressable web URL -- share links are minted by a person sharing an
+# item, not by an API -- so this cannot deep-link to the meeting folder the way
+# a Google Drive link can. The folder path is shown alongside it.
 icloud_base_url: https://www.icloud.com/iclouddrive/

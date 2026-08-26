@@ -60,7 +60,10 @@ def render_markdown(meeting, notes, recording_start=None, source_video=None):
     lines.append("")
 
     if not notes:
-        lines.append("_No notes were generated (no LLM provider configured)._")
+        lines.append(
+            "_No notes were generated for this meeting. The transcript is complete; "
+            "check the run output for why, then re-run to fill this in._"
+        )
         return "\n".join(lines) + "\n"
 
     if notes.get("summary"):
@@ -204,7 +207,10 @@ def render_html(meeting, notes, recording_start=None, source_video=None):
     ]
 
     if not notes:
-        parts.append("<p><em>No notes were generated (no LLM provider configured).</em></p>")
+        parts.append(
+            "<p><em>No notes were generated for this meeting. The transcript is "
+            "complete; check the run output for why, then re-run to fill this in.</em></p>"
+        )
     else:
         if notes.get("summary"):
             parts.append(f'<div class="summary"><p>{esc(notes["summary"])}</p></div>')

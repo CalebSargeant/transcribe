@@ -28,6 +28,15 @@ DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
+class TruncatedCompletion(RuntimeError):
+    """The model hit its output cap before finishing the JSON object.
+
+    Worth distinguishing: it is recoverable by retrying with more room, unlike a
+    malformed response, and on a reasoning model the budget goes on chain of
+    thought rather than on the answer.
+    """
+
+
 def _provider(config):
     """Return the configured provider name, defaulting to 'claude'."""
     if not config:
@@ -125,6 +134,8 @@ def _anthropic_complete_json(
         tools=[tool],
         tool_choice={"type": "tool", "name": "record_result"},
     )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise TruncatedCompletion("model ran out of output budget (stop_reason='max_tokens')")
     for block in response.content:
         if getattr(block, "type", None) == "tool_use":
             return block.input
@@ -176,12 +187,11 @@ def _openai_complete_json(
     )
     choice = response.choices[0]
     content = choice.message.content
-    if not content:
-        # Reasoning models spend completion tokens on their chain of thought, so
-        # a truncated response comes back with no content at all.
-        raise ValueError(
-            f"model returned no content (finish_reason={choice.finish_reason!r}); "
-            "raise notes_max_tokens if this is a reasoning model"
+    if choice.finish_reason == "length" or not content:
+        # Hitting the cap truncates mid-JSON, so parsing it would fail with a
+        # decode error that says nothing about the real cause.
+        raise TruncatedCompletion(
+            f"model ran out of output budget (finish_reason={choice.finish_reason!r})"
         )
     return json.loads(content)
 
@@ -207,10 +217,20 @@ def complete_json(config, system, user, schema, max_tokens=8000, temperature=0.2
         return None
     model = _model_for(config)
     backend = _openai_complete_json if _provider(config) == "openai" else _anthropic_complete_json
+    options = _client_options(config)
     try:
-        return backend(
-            system, user, schema, api_key, model, max_tokens, temperature, _client_options(config)
-        )
+        return backend(system, user, schema, api_key, model, max_tokens, temperature, options)
+    except TruncatedCompletion as e:
+        retry_tokens = max_tokens * 2
+        print(f"Note: {e}; retrying with {retry_tokens} tokens")
+        try:
+            return backend(system, user, schema, api_key, model, retry_tokens, temperature, options)
+        except Exception as retry_error:
+            print(
+                f"Warning: structured LLM call failed after retry "
+                f"({type(retry_error).__name__}: {retry_error})"
+            )
+            return None
     except Exception as e:
         print(f"Warning: structured LLM call failed ({type(e).__name__}: {e})")
         return None

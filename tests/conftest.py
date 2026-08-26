@@ -132,7 +132,12 @@ class FakeOpenAICompletions:
 
     def create(self, **kwargs):
         self._recorder.append(kwargs)
-        return FakeOpenAIResponse(self._content)
+        # Resolved per call, so a test can make a retry answer differently from
+        # the attempt before it.
+        content = self._content() if callable(self._content) else self._content
+        while callable(content):
+            content = content()
+        return FakeOpenAIResponse(content)
 
 
 class FakeOpenAIChat:
@@ -154,7 +159,9 @@ def fake_openai(monkeypatch):
     def _client_factory(api_key=None, **options):
         state["init_keys"].append(api_key)
         state["init_options"].append(options)
-        return FakeOpenAIClient(state["calls"], state["content"], api_key=api_key, **options)
+        return FakeOpenAIClient(
+            state["calls"], lambda: state["content"], api_key=api_key, **options
+        )
 
     fake_mod = types.ModuleType("openai")
     fake_mod.OpenAI = _client_factory
@@ -163,5 +170,10 @@ def fake_openai(monkeypatch):
     def set_content(content):
         state["content"] = content
 
+    def set_content_factory(factory):
+        """Supply a callable resolved on every request, for multi-attempt tests."""
+        state["content"] = factory
+
     state["set_content"] = set_content
+    state["set_content_factory"] = set_content_factory
     return state

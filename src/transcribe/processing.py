@@ -201,16 +201,22 @@ def process_recording(video_file, config=None, write_json=False):
                             + ", ".join(f"{label} → {name}" for label, name in named.items())
                         )
 
-            notes = generate_notes(meeting, config)
-            if notes:
-                meeting.title = notes.get("title") or meeting.title
-                meeting.notes = notes
-                print(f"  ✓ Notes: {meeting.title}")
-                steps = notes.get("next_steps") or []
-                if steps:
-                    print(f"  ✓ {len(steps)} next step(s)")
-            else:
+            # Distinguish "no provider configured" from "the call failed": both
+            # yield no notes, but only one of them is the user's doing.
+            if not is_configured(config):
+                notes = None
                 print("  Notes skipped (no LLM provider configured)")
+            else:
+                notes = generate_notes(meeting, config)
+                if notes:
+                    meeting.title = notes.get("title") or meeting.title
+                    meeting.notes = notes
+                    print(f"  ✓ Notes: {meeting.title}")
+                    steps = notes.get("next_steps") or []
+                    if steps:
+                        print(f"  ✓ {len(steps)} next step(s)")
+                else:
+                    print("  ✗ Notes generation FAILED (see the warning above)")
 
             folder = _unique_folder(base_dest, _folder_name_for(meeting, recording_start, notes))
             written = _write_meeting_outputs(

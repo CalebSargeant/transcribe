@@ -59,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diarization runs ~2.6x faster: the segmentation window shift ratio defaults to 0.25
   rather than the upstream 0.1, which measured 28.9x realtime against 10.9x for the same
   turns. `read_wav_window` also stopped allocating a second full-size copy of the audio.
+- A truncated LLM response is now recognised as truncation and retried with a bigger
+  budget. Previously, hitting the output cap mid-JSON surfaced as
+  `JSONDecodeError: Unterminated string`, which named the wrong cause, and the notes were
+  dropped for that meeting.
+- "No notes were generated (no LLM provider configured)" was printed and written into the
+  notes whenever notes were missing for *any* reason, including a failed call against a
+  perfectly good provider. The run output now distinguishes the two, and the notes file no
+  longer asserts a cause it cannot know.
 - Speaker naming no longer starves itself. It was sent ten minutes of surrounding
   transcript and asked about every voice cluster including near-silent fragments;
   deepseek-v4-pro spent its entire completion budget reasoning and returned nothing on

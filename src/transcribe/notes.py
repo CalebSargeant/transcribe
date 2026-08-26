@@ -21,8 +21,19 @@ DEFAULT_TRANSCRIPT_TOKEN_BUDGET = 120_000
 # start and sign-offs at the end, and the per-speaker excerpts carry the rest of
 # the signal, so a much smaller slice answers the question just as well for a
 # fraction of the latency and cost.
-SPEAKER_CONTEXT_SECONDS = 300
-SPEAKER_TOKEN_BUDGET = 12_000
+# Introductions land in the first minute or two of a call.
+SPEAKER_CONTEXT_SECONDS = 120
+SPEAKER_TOKEN_BUDGET = 4_000
+# Excerpts are there to characterise a voice, not to be read closely.
+SPEAKER_EXCERPT_TURNS = 3
+SPEAKER_EXCERPT_CHARS = 140
+
+# Only ask about voices with enough airtime to be worth naming. Clustering on a
+# long meeting produces a tail of near-silent fragments, and asking a model to
+# place every one of them turns a lookup into a combinatorial puzzle it will
+# happily think about for minutes.
+MAX_SPEAKERS_TO_NAME = 6
+MIN_SPEAKER_SECONDS_TO_NAME = 60.0
 
 SPEAKER_SCHEMA = {
     "type": "object",
@@ -45,10 +56,6 @@ SPEAKER_SCHEMA = {
                         "type": "string",
                         "enum": ["high", "medium", "low"],
                         "description": "How well the transcript supports this name.",
-                    },
-                    "evidence": {
-                        "type": "string",
-                        "description": "The quote or exchange that identifies them.",
                     },
                 },
                 "required": ["label", "name", "confidence"],
@@ -176,25 +183,33 @@ def _condense(text, token_budget):
     )
 
 
-def _naming_context(meeting, window=SPEAKER_CONTEXT_SECONDS):
-    """Return the opening and closing of a meeting, where names get said.
+def _naming_context(meeting, known_participants=None, window=SPEAKER_CONTEXT_SECONDS):
+    """Return the passages that actually identify who is talking.
 
-    People introduce themselves at the start and address each other on the way
-    out. The middle is mostly subject matter, which tells you little about who
-    is speaking.
+    Two things name a speaker: the opening, where people greet and introduce
+    themselves, and any line where someone says a participant's name out loud.
+    Everything else is subject matter.
+
+    Sending more than that measurably backfires. Given ten minutes of
+    surrounding transcript, deepseek-v4-pro spent its entire completion budget
+    reasoning and returned nothing; given only these passages it answers in
+    seconds.
     """
     segments = meeting.segments
     if not segments:
         return ""
-    opening = [seg for seg in segments if seg.start <= meeting.start + window]
-    closing = [seg for seg in segments if seg.end >= meeting.end - window]
-    seen = set()
-    picked = []
-    for segment in opening + closing:
-        if id(segment) not in seen:
+
+    first_names = {name.split()[0].lower() for name in (known_participants or []) if name.split()}
+
+    picked, seen = [], set()
+    for segment in segments:
+        in_opening = segment.start <= meeting.start + window
+        lowered = segment.text.lower()
+        names_someone = any(first_name in lowered for first_name in first_names)
+        if (in_opening or names_someone) and id(segment) not in seen:
             seen.add(id(segment))
             picked.append(segment)
-    picked.sort(key=lambda seg: seg.start)
+
     text = "\n".join(
         f"[{format_timestamp(seg.start)}] {seg.speaker or '?'}: {seg.text}" for seg in picked
     )
@@ -211,17 +226,31 @@ def resolve_speaker_names(meeting, config, known_participants=None):
     Labels stay anonymous when the evidence is weak, which is the right outcome:
     a wrong name in the notes is worse than no name.
     """
-    labels = meeting.speakers()
-    if not labels or not is_configured(config):
+    if not is_configured(config):
+        return {}
+
+    # meeting.speakers() is ordered by talk time, so this keeps the people who
+    # actually held the floor and drops the fragment tail.
+    talk_times = {}
+    for segment in meeting.segments:
+        if segment.speaker:
+            talk_times[segment.speaker] = talk_times.get(segment.speaker, 0.0) + segment.duration
+    labels = [
+        label
+        for label in meeting.speakers()
+        if talk_times.get(label, 0.0) >= MIN_SPEAKER_SECONDS_TO_NAME
+    ][:MAX_SPEAKERS_TO_NAME]
+    if not labels:
         return {}
 
     samples = []
     for label in labels:
         turns = [seg for seg in meeting.segments if seg.speaker == label]
         turns.sort(key=lambda seg: -seg.duration)
-        excerpt = " / ".join(seg.text[:200] for seg in turns[:6])
-        talk_time = sum(seg.duration for seg in turns)
-        samples.append(f"{label} (speaks for {talk_time / 60:.1f} min): {excerpt}")
+        excerpt = " / ".join(
+            seg.text[:SPEAKER_EXCERPT_CHARS] for seg in turns[:SPEAKER_EXCERPT_TURNS]
+        )
+        samples.append(f"{label} (speaks for {talk_times[label] / 60:.1f} min): {excerpt}")
 
     roster = ""
     if known_participants:
@@ -251,7 +280,7 @@ def resolve_speaker_names(meeting, config, known_participants=None):
         system,
         user,
         SPEAKER_SCHEMA,
-        max_tokens=int(config.get("speaker_max_tokens", 8000)),
+        max_tokens=int(config.get("speaker_max_tokens", 16000)),
     )
     if not result:
         return {}

@@ -28,8 +28,11 @@ openai_base_url: ""
 # openai_base_url: http://localhost:11434/v1     # Ollama
 
 # Reasoning models spend completion tokens on their chain of thought, so give
-# them headroom or the notes come back empty.
-notes_max_tokens: 8000
+# them headroom or these steps come back empty. You are only charged for what
+# is actually generated.
+boundary_max_tokens: 8000
+speaker_max_tokens: 16000
+notes_max_tokens: 16000
 
 # Slack webhook URL for notifications
 # Create one at: https://api.slack.com/messaging/webhooks

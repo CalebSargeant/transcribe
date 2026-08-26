@@ -62,7 +62,10 @@ DEFAULT_CONFIG = {
     # tokens and return empty content if they exhaust the budget thinking, so
     # these are generous. You are only charged for what is actually generated.
     "boundary_max_tokens": 8000,
-    "speaker_max_tokens": 8000,
+    # Naming a dozen voices takes as much deliberation as writing the notes --
+    # measured against deepseek-v4-pro, 8000 was exhausted by reasoning alone
+    # and every meeting came back unnamed.
+    "speaker_max_tokens": 16000,
     "notes_max_tokens": 16000,
     # --- Speaker attribution ----------------------------------------------
     # Local voice clustering via sherpa-onnx. Needs: pip install 'transcribe[diarize]'

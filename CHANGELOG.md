@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diarization runs ~2.6x faster: the segmentation window shift ratio defaults to 0.25
   rather than the upstream 0.1, which measured 28.9x realtime against 10.9x for the same
   turns. `read_wav_window` also stopped allocating a second full-size copy of the audio.
+- Speaker naming no longer starves itself. It was sent ten minutes of surrounding
+  transcript and asked about every voice cluster including near-silent fragments;
+  deepseek-v4-pro spent its entire completion budget reasoning and returned nothing on
+  every meeting. It now sends only the opening and lines that say a participant's name
+  out loud, and only asks about voices with real airtime -- 13k characters down to 3k,
+  and an answer in seconds rather than never.
 - Reasoning models bill their chain of thought as completion tokens and return *empty*
   content when they exhaust the budget thinking. The output budgets now allow for it, and
   an exhausted budget reports that cause instead of an opaque JSON parse error.

@@ -11,12 +11,19 @@ a = Analysis(
     ],
     hiddenimports=[
         'transcribe',
+        'transcribe.calendars',
         'transcribe.cli',
         'transcribe.config',
         'transcribe.daemon',
+        'transcribe.diarize',
         'transcribe.gdrive',
         'transcribe.llm',
+        'transcribe.media',
+        'transcribe.notes',
         'transcribe.processing',
+        'transcribe.render',
+        'transcribe.segmentation',
+        'transcribe.segments',
         'transcribe.slack',
         'transcribe.tls',
         'transcribe.watch',
@@ -28,9 +35,12 @@ a = Analysis(
         'anthropic',
         'openai',
         'requests',
-        # gdrive (google.auth / googleapiclient) is intentionally NOT bundled:
-        # the release build omits the gdrive extra and falls back to file://
-        # links, so listing those imports here only produces build ERRORs.
+        # Optional extras are intentionally NOT bundled. Each is imported
+        # inside the function that needs it and degrades to a printed note, so
+        # listing them here would only produce build ERRORs:
+        #   gdrive   -> google.auth, googleapiclient  (falls back to file:// links)
+        #   diarize  -> sherpa_onnx, numpy            (falls back to no speakers)
+        #   calendar -> EventKit                      (falls back to inferred titles)
     ],
     hookspath=[],
     hooksconfig={},

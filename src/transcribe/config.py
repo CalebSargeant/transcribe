@@ -21,11 +21,70 @@ DEFAULT_CONFIG = {
     # OpenAI settings (used when llm_provider is "openai").
     "openai_api_key": "",
     "openai_model": "gpt-4o-mini",
+    # Point the "openai" provider at any OpenAI-compatible endpoint: a LiteLLM
+    # gateway, Ollama, vLLM, LM Studio, OpenRouter. Empty means api.openai.com.
+    "openai_base_url": "",
+    # SDK defaults are 600s x 2 retries, so one stalled call can hold up a run
+    # for half an hour. A reasoning model on a long transcript is genuinely
+    # slow, so this is generous but bounded.
+    "llm_timeout_seconds": 600,
+    "llm_max_retries": 2,
     "slack_webhook_url": "",
     "video_extensions": [".mov", ".mp4", ".avi", ".mkv", ".m4v"],
     # Whisper model name (ggml-<name>.bin); auto-downloaded if missing.
-    "whisper_model": "base",
+    # large-v3-turbo is the accuracy/speed sweet spot on Apple Silicon.
+    "whisper_model": "large-v3-turbo",
     "icloud_base_url": "https://www.icloud.com/iclouddrive/",  # Users can customize this
+    # --- Transcription -----------------------------------------------------
+    # Voice Activity Detection. Leave this on: without it, whisper hallucinates
+    # filler over room tone and can lock into a repetition loop that ruins
+    # everything after it.
+    "whisper_vad": True,
+    "whisper_vad_threshold": 0.5,
+    "whisper_suppress_non_speech": True,
+    "whisper_language": "en",
+    "whisper_threads": 8,
+    # Optional initial prompt biasing the decoder toward your vocabulary, e.g.
+    # "Terraform, Kubernetes, MikroTik, BGP, IPsec". Improves proper nouns.
+    "whisper_prompt": "",
+    # --- Meetings ----------------------------------------------------------
+    # Split a recording into the separate meetings it contains, and write one
+    # folder of notes per meeting. Set false for the original flat behaviour.
+    "meeting_mode": True,
+    "split_meetings": True,
+    # Also cut the source video into one clip per meeting (lossless stream copy).
+    "split_video": True,
+    "move_source_video": True,
+    # A pause at least this long is a candidate boundary between meetings.
+    "meeting_gap_seconds": 180,
+    "min_meeting_seconds": 120,
+    # Output budgets. Reasoning models bill their chain of thought as completion
+    # tokens and return empty content if they exhaust the budget thinking, so
+    # these are generous. You are only charged for what is actually generated.
+    "boundary_max_tokens": 8000,
+    "speaker_max_tokens": 8000,
+    "notes_max_tokens": 16000,
+    # --- Speaker attribution ----------------------------------------------
+    # Local voice clustering via sherpa-onnx. Needs: pip install 'transcribe[diarize]'
+    "diarization_enabled": True,
+    # Cosine-distance threshold for merging voices. Higher merges more. The
+    # upstream default of 0.5 badly over-segments real meetings (36 "speakers"
+    # in a 15-minute sample); 0.8 gave a plausible 6.
+    "diarization_threshold": 0.8,
+    # Segmentation window step, as a fraction of the window. Lower is slower for
+    # no measurable gain: 0.1 ran at 10.9x realtime, 0.25 at 28.9x, same turns.
+    "diarization_window_shift_ratio": 0.25,
+    # Diarization is the slowest local stage on a long meeting; match whisper.
+    "diarization_threads": 8,
+    # Names that recur in your meetings; helps map voices to real people when no
+    # calendar attendee list is available.
+    "known_participants": [],
+    # --- Calendar ----------------------------------------------------------
+    # Match the recording against calendar events for real titles and attendees.
+    # Needs: pip install 'transcribe[calendar]' and Calendar permission.
+    "calendar_enabled": True,
+    "calendar_source": "macos",
+    "calendar_margin_minutes": 15,
 }
 
 

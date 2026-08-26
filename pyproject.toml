@@ -28,6 +28,18 @@ gdrive = [
     "google-auth>=2.0.0",
     "google-api-python-client>=2.0.0",
 ]
+# Local speaker attribution. ONNX only -- no PyTorch, no model gating.
+diarize = [
+    "sherpa-onnx>=1.10.0",
+    "numpy>=1.24",
+]
+# macOS Calendar lookup for meeting titles and attendee lists.
+calendar = [
+    "pyobjc-framework-EventKit>=10.0",
+]
+all = [
+    "transcribe[gdrive,diarize,calendar]",
+]
 
 [project.scripts]
 transcribe = "transcribe.cli:main"
@@ -36,6 +48,8 @@ transcribe = "transcribe.cli:main"
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",
+    # Exercised by the diarization tests; the ONNX runtime itself is not needed.
+    "numpy>=1.24",
 ]
 
 [tool.hatch.build.targets.wheel]

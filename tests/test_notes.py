@@ -182,14 +182,48 @@ def test_resolve_speaker_names_without_api_key(meeting):
 # --- _naming_context --------------------------------------------------------
 
 
-def test_naming_context_keeps_opening_and_closing():
-    """Introductions cluster at the start and sign-offs at the end."""
+def test_naming_context_keeps_the_opening():
+    """Introductions cluster in the first minute or two of a call."""
     segments = [Segment(start=t, end=t + 10, text=f"line at {t}") for t in range(0, 2000, 100)]
     meeting = Meeting(index=1, start=0, end=1910, segments=segments)
     context = notes_mod._naming_context(meeting, window=300)
-    assert "line at 0" in context  # opening
-    assert "line at 1900" in context  # closing
-    assert "line at 900" not in context  # middle dropped
+    assert "line at 0" in context
+    assert "line at 900" not in context  # subject matter, drops out
+
+
+def test_naming_context_keeps_lines_that_say_a_name():
+    """A line naming someone is the strongest evidence there is."""
+    segments = [
+        Segment(start=0, end=10, text="right, shall we begin"),
+        Segment(start=600, end=610, text="the routing table looks fine"),
+        Segment(start=1200, end=1210, text="thanks Caleb, that makes sense"),
+    ]
+    meeting = Meeting(index=1, start=0, end=1210, segments=segments)
+    context = notes_mod._naming_context(meeting, ["Caleb Sargeant", "Arno"], window=120)
+    assert "thanks Caleb" in context  # names someone, kept despite being mid-meeting
+    assert "shall we begin" in context  # opening
+    assert "routing table" not in context  # names nobody, dropped
+
+
+def test_naming_context_name_match_is_case_insensitive():
+    segments = [
+        Segment(start=0, end=5, text="hi"),
+        Segment(start=900, end=910, text="ARNO can you take this one"),
+    ]
+    meeting = Meeting(index=1, start=0, end=910, segments=segments)
+    context = notes_mod._naming_context(meeting, ["Arno"], window=10)
+    assert "ARNO can you take this" in context
+
+
+def test_naming_context_without_known_participants_keeps_only_the_opening():
+    segments = [
+        Segment(start=0, end=5, text="morning all"),
+        Segment(start=900, end=910, text="thanks Caleb"),
+    ]
+    meeting = Meeting(index=1, start=0, end=910, segments=segments)
+    context = notes_mod._naming_context(meeting, None, window=120)
+    assert "morning all" in context
+    assert "thanks Caleb" not in context
 
 
 def test_naming_context_on_short_meeting_keeps_everything():
@@ -223,3 +257,25 @@ def test_resolve_speaker_names_sends_a_bounded_prompt(monkeypatch, config):
     resolve_speaker_names(long_meeting, config)
     assert "filler 1800" not in captured["user"]  # the middle hour is not sent
     assert "filler 0" in captured["user"]
+
+
+def test_resolve_speaker_names_ignores_fragment_voices(monkeypatch, config):
+    """Clustering leaves a tail of near-silent fragments; naming them is noise.
+
+    Asking a model to place every fragment turns a lookup into a combinatorial
+    puzzle it will spend its whole budget on.
+    """
+    captured = {}
+    monkeypatch.setattr(
+        notes_mod,
+        "complete_json",
+        lambda cfg, system, user, schema, **kw: captured.update(user=user) or {"speakers": []},
+    )
+    segments = [Segment(start=0, end=600, text="I did the routing work", speaker="Speaker 1")]
+    # Two seconds of speech: a cough, not a participant.
+    segments.append(Segment(start=600, end=602, text="mm", speaker="Speaker 2"))
+    meeting = Meeting(index=1, start=0, end=602, segments=segments)
+
+    resolve_speaker_names(meeting, config)
+    assert "Speaker 1" in captured["user"]
+    assert "Speaker 2 (" not in captured["user"]

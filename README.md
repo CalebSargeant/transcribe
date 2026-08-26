@@ -98,6 +98,27 @@ transcribe ~/Movies/meeting.mov
 Models download themselves on first use. For step-by-step setup see
 **[docs/install.md](docs/install.md)**.
 
+### Running a local checkout
+
+Homebrew installs a frozen build, which is what you want day to day and useless while
+changing the code. `scripts/transcribe-dev` runs the working tree instead, so `transcribe`
+stays the released version and `transcribe-dev` is whatever you are editing:
+
+```bash
+ln -sf "$PWD/scripts/transcribe-dev" ~/.local/bin/transcribe-dev
+```
+
+```bash
+transcribe-dev doctor
+```
+
+It resolves the checkout from the symlink's own location. To point it at a git worktree
+instead, set `TRANSCRIBE_DEV_REPO`:
+
+```bash
+TRANSCRIBE_DEV_REPO=~/repos/transcribe/.claude/worktrees/my-branch transcribe-dev meeting.mov
+```
+
 ## Commands
 
 ```bash

@@ -354,7 +354,6 @@ def _print_usage():
     print("  transcribe voicememos [--import]  - List/import macOS Voice Memos")
     print("       --debug        show the library schema")
     print("       --all          every memo, not just the last day")
-    print("       --no-whisper   skip memos Voice Memos has not transcribed")
     print("  transcribe menubar                - Menu bar app with a manual override")
     print("  transcribe mic                    - Show inputs and whether a meeting is detected")
     print("  transcribe config                 - Show/edit configuration")

@@ -258,6 +258,26 @@ def _resolve_audio(path_value):
     return None
 
 
+def _read_sidecar_transcript(audio_path):
+    """Look for a transcript sidecar file alongside the audio file.
+
+    Voice Memos stores transcripts beside the audio rather than in the DB on
+    every macOS version tested. The sidecar shares the audio file's stem; this
+    tries the extensions most commonly seen in the Recordings directory.
+    """
+    if not audio_path:
+        return None
+    audio = Path(audio_path)
+    for ext in (".transcript", ".txt"):
+        sidecar = audio.with_suffix(ext)
+        if sidecar.exists():
+            try:
+                return _decode_transcript(sidecar.read_bytes())
+            except OSError:
+                pass
+    return None
+
+
 def list_memos(since=None, limit=None):
     """Return Voice Memos recordings, newest first.
 
@@ -275,6 +295,7 @@ def list_memos(since=None, limit=None):
         columns = ", ".join(f'"{name}"' for name in wanted)
         order = f' ORDER BY "{schema["date"]}" DESC' if schema["date"] else ""
         rows = connection.execute(f'SELECT {columns} FROM "{schema["table"]}"{order}').fetchall()
+    connection.close()
 
     memos = []
     for row in rows:
@@ -290,6 +311,10 @@ def list_memos(since=None, limit=None):
             continue
 
         audio = _resolve_audio(values.get(schema["path"]))
+        audio_path = str(audio) if audio else None
+        db_transcript = _decode_transcript(
+            values.get(schema["transcript"]) if schema["transcript"] else None
+        )
         memos.append(
             {
                 "title": _clean_title(
@@ -297,10 +322,8 @@ def list_memos(since=None, limit=None):
                 ),
                 "recorded_at": recorded_at,
                 "duration": values.get(schema["duration"]) if schema["duration"] else None,
-                "audio_path": str(audio) if audio else None,
-                "transcript": _decode_transcript(
-                    values.get(schema["transcript"]) if schema["transcript"] else None
-                ),
+                "audio_path": audio_path,
+                "transcript": db_transcript or _read_sidecar_transcript(audio_path),
             }
         )
         if limit and len(memos) >= limit:
@@ -360,6 +383,7 @@ def describe_library():
             if any(hint in column.upper() for hint in _TRANSCRIPT_HINTS)
         ]
         count = connection.execute(f'SELECT COUNT(*) FROM "{schema["table"]}"').fetchone()[0]
+    connection.close()
 
     return {
         "database": str(DATABASE),

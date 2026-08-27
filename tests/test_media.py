@@ -68,7 +68,7 @@ def test_recording_started_at_prefers_container_metadata(fake_run):
 def test_recording_started_at_falls_back_to_obs_filename(fake_run):
     """OBS names files by wall-clock start, which beats guessing from mtime."""
     assert media.recording_started_at("/Users/x/Movies/2026-04-14 09-58-02.mov") == datetime(
-        2026, 8, 25, 9, 34, 17
+        2026, 4, 14, 9, 58, 2
     )
 
 

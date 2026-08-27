@@ -30,43 +30,44 @@ One folder per meeting, in your destination directory:
 
 ```
 Meetings/
-├── 2026-08-25 1028 Camera subnet routing fixes/
+├── 2026-04-14 1000 Checkout latency and Q3 rollout/
 │   ├── notes.md                 # the notes, in Markdown
 │   ├── notes.html               # the same notes as a standalone page
 │   ├── notes.json               # machine-readable: notes + every segment
 │   ├── transcript.txt           # timestamped, grouped by speaker
 │   ├── summary.txt              # the one-paragraph summary on its own
-│   └── 2026-08-25 1028 ....mov  # this meeting's slice of the recording
-└── 2026-08-25 1145 Q3 platform budget/
+│   └── 2026-04-14 1000 ....mov  # this meeting's slice of the recording
+└── 2026-04-14 1130 Design review/
     └── ...
 ```
 
 `notes.md` follows the structure you'd expect from a hosted meeting assistant:
 
 ```markdown
-# Camera subnet routing fixes
+# Checkout latency and Q3 rollout
 
-**Date:** Monday, 25 August 2026, 10:28
-**Duration:** 48 minutes
-**Invited:** Caleb Sargeant, Arno, Llew Adamson
+**Date:** Tuesday, 14 April 2026, 10:00
+**Duration:** 45 minutes
+**Invited:** Sam Okoro, Priya Nair, Alex Whitfield
 
 ## Summary
-The team reviewed network adjustments and set boundaries for client security work.
+The team traced checkout latency to an unindexed query and agreed a rollout order for Q3.
 
-### Network configuration review
-Source NAT and VPN tunnel changes resolved routing for three camera subnets.
+### Latency investigation
+Median checkout time had roughly doubled since the March release. The cause was a missing
+index on the orders table, added behind a migration.
 
 ## Decisions
 ### Aligned
-- **Terraform documentation** — All config changes get documented in the drift doc.
+- **Ship the index this week** - The migration goes out ahead of the Q3 work.
 ### Needs further discussion
-- **Client network scope** — Whether managing client networks is in scope is unresolved.
+- **Whether to split the service** - Raised, but nobody committed to a direction.
 
 ## Next steps
-- **[Arno] Update Terraform docs** — Add the new configuration to the drift documentation.
+- **[Priya Nair] Add the orders index** - Ship the migration and confirm the median drops.
 
 ## Details
-- **Address list configuration:** Caleb demonstrated the three client subnets. (00:06:27)
+- **Reproducing the slowdown:** Sam walked through the traces. (00:06:27)
 ```
 
 ## Quickstart

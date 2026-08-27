@@ -285,13 +285,13 @@ title:
 
 ```
 Meetings/
-├── 2026-08-25 1028 Camera subnet routing fixes/
+├── 2026-04-14 1000 Checkout latency and Q3 rollout/
 │   ├── notes.md                 # summary, decisions, next steps, timestamped details
 │   ├── notes.html               # the same notes as a standalone page
 │   ├── notes.json               # machine-readable: notes plus every segment
 │   ├── transcript.txt           # timestamped, grouped by speaker
 │   ├── summary.txt              # the one-paragraph summary on its own
-│   └── 2026-08-25 1028 ....mov  # this meeting's slice of the recording
+│   └── 2026-04-14 1000 ....mov  # this meeting's slice of the recording
 └── Source recordings/
     └── 2026-08-25 09-34-17.mov  # the original, kept intact
 ```

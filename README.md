@@ -119,6 +119,50 @@ instead, set `TRANSCRIBE_DEV_REPO`:
 TRANSCRIBE_DEV_REPO=~/repos/transcribe/.claude/worktrees/my-branch transcribe-dev meeting.mov
 ```
 
+### Recording meetings automatically
+
+`transcribe autorecord` starts an OBS recording when a meeting begins and stops it when the
+meeting ends, which closes the loop: the recording lands in your watch directory and the
+daemon transcribes it without you touching anything.
+
+Detection is by **microphone activity**, read from CoreAudio's
+`kAudioDevicePropertyDeviceIsRunningSomewhere` — the same signal behind the menu-bar
+microphone indicator. That means it works for any app: Meet in a browser tab counts the
+same as Zoom, Teams, or a Slack huddle, with no per-app integration. Reading the property
+needs no microphone permission, because it is not listening.
+
+Two guards keep it from being irritating. The mic must be held for
+`autorecord_start_after_seconds` (default 45) before recording starts, so a notification
+chime does not create a file, and released for `autorecord_stop_after_seconds` (default
+120) before it stops, so swapping a headset does not split a meeting in two. Virtual inputs
+(Steam, BlackHole, Loopback, Krisp) are ignored, since several report as running whenever
+their host app is open.
+
+```bash
+pip install 'transcribe[autorecord]'
+```
+
+Enable **OBS > Tools > WebSocket Server Settings**, put the password in
+`~/.transcribe/config.yaml` as `obs_password`, then:
+
+```bash
+transcribe mic
+```
+
+```bash
+transcribe setup-autorecord
+```
+
+`transcribe mic` shows every input and what is currently in use, which is the quickest way
+to see why a meeting was or was not picked up.
+
+**Before you turn this on**, be aware it removes the moment where you decide whether to
+record. It will capture 1:1s, personal calls and anything else that uses your microphone,
+and recording other people has consent and data-protection implications that vary by
+jurisdiction. Recordings are also large (roughly 500 MB per hour), so watch the disk;
+`autorecord_min_free_gb` refuses to start below a threshold rather than producing a
+truncated file.
+
 ## Commands
 
 ```bash
@@ -130,6 +174,9 @@ transcribe setup-daemon             # install the launchd agent (runs at login)
 transcribe doctor                   # check tools, models, keys, permissions
 transcribe calendar-check           # grant and verify macOS Calendar access
 transcribe config                   # show configuration and its location
+transcribe autorecord               # record meetings automatically via OBS
+transcribe setup-autorecord         # install the auto-record launchd agent
+transcribe mic                      # show audio inputs and what is in use
 ```
 
 ## How the pieces work

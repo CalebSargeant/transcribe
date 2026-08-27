@@ -686,6 +686,18 @@ wheels = [
 ]
 
 [[package]]
+name = "obsws-python"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "websocket-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/2f/624af34a5b0f09fbf858bf6743521a8626d712671ac49573e625ad1c97d3/obsws_python-1.8.0.tar.gz", hash = "sha256:e082894f80deb0836861fdc3c222e497308c8f66328da6075baba5b456a20971", size = 28727, upload-time = "2025-07-01T08:24:11.652Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/4b/537f3d372f065b2aeeac3812228066eb70f47436adf88aaacc94eb5fd4e1/obsws_python-1.8.0-py3-none-any.whl", hash = "sha256:537bde416e149b6f59e0b2f31761d4a40329feafec171bde6fc1346ab8516e28", size = 30819, upload-time = "2025-07-01T08:24:10.086Z" },
+]
+
+[[package]]
 name = "openai"
 version = "2.41.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1156,8 +1168,12 @@ all = [
     { name = "google-auth" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "obsws-python" },
     { name = "pyobjc-framework-eventkit" },
     { name = "sherpa-onnx" },
+]
+autorecord = [
+    { name = "obsws-python" },
 ]
 calendar = [
     { name = "pyobjc-framework-eventkit" },
@@ -1186,15 +1202,16 @@ requires-dist = [
     { name = "google-api-python-client", marker = "extra == 'gdrive'", specifier = ">=2.0.0" },
     { name = "google-auth", marker = "extra == 'gdrive'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'diarize'", specifier = ">=1.24" },
+    { name = "obsws-python", marker = "extra == 'autorecord'", specifier = ">=1.6" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pyobjc-framework-eventkit", marker = "extra == 'calendar'", specifier = ">=10.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "sherpa-onnx", marker = "extra == 'diarize'", specifier = ">=1.10.0" },
-    { name = "transcribe", extras = ["gdrive", "diarize", "calendar"], marker = "extra == 'all'" },
+    { name = "transcribe", extras = ["gdrive", "diarize", "calendar", "autorecord"], marker = "extra == 'all'" },
     { name = "watchdog", specifier = ">=3.0.0" },
 ]
-provides-extras = ["gdrive", "diarize", "calendar", "all"]
+provides-extras = ["gdrive", "diarize", "calendar", "autorecord", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1267,4 +1284,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/07/f6/d0e5b343768e8bcb4cda79f0f2f55051bf26177ecd5651f84c07567461cf/watchdog-6.0.0-py3-none-win32.whl", hash = "sha256:07df1fdd701c5d4c8e55ef6cf55b8f0120fe1aef7ef39a1c6fc6bc2e606d517a", size = 79065, upload-time = "2024-11-01T14:07:09.525Z" },
     { url = "https://files.pythonhosted.org/packages/db/d9/c495884c6e548fce18a8f40568ff120bc3a4b7b99813081c8ac0c936fa64/watchdog-6.0.0-py3-none-win_amd64.whl", hash = "sha256:cbafb470cf848d93b5d013e2ecb245d4aa1c8fd0504e863ccefa32445359d680", size = 79070, upload-time = "2024-11-01T14:07:10.686Z" },
     { url = "https://files.pythonhosted.org/packages/33/e8/e40370e6d74ddba47f002a32919d91310d6074130fe4e17dabcafc15cbf1/watchdog-6.0.0-py3-none-win_ia64.whl", hash = "sha256:a1914259fa9e1454315171103c6a30961236f508b9b623eae470268bbcc6a22f", size = 79067, upload-time = "2024-11-01T14:07:11.845Z" },
+]
+
+[[package]]
+name = "websocket-client"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]

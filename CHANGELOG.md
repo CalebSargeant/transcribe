@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/transcribe-dev` — runs a local checkout alongside the Homebrew release, so
   `transcribe` stays the released build while `transcribe-dev` is the working tree.
   `TRANSCRIBE_DEV_REPO` points it at another checkout or a git worktree.
+- **Automatic recording**: `transcribe autorecord` starts and stops an OBS recording as
+  meetings begin and end, closing the loop from meeting to notes. Detection is by
+  microphone activity via CoreAudio, so it covers any conferencing app without per-app
+  integration and needs no microphone permission. Virtual inputs are ignored, and debounce
+  either side stops chimes creating files or headset swaps splitting meetings.
+- `transcribe setup-autorecord` installs the launchd agent; `transcribe mic` shows which
+  inputs are in use.
 - `transcribe doctor` — checks tools, models, keys, and permissions.
 - `transcribe calendar-check` — grants and verifies macOS Calendar access.
 - `--flat`, `--no-split`, and `--no-diarize` flags.

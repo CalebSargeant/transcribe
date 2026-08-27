@@ -169,6 +169,24 @@ processing._write_meeting_outputs()  ──► destination/<date> <title>/
 slack.send_slack_notification()
 ```
 
+## Meeting detection
+
+`audio.py` reads CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere` for every
+device with an input stream. This is the signal behind the menu-bar microphone indicator,
+so it covers any application without per-app integration, and reading it requires no
+microphone permission.
+
+Virtual and loopback devices (Steam, BlackHole, Loopback, Krisp, aggregate devices) are
+filtered out: several report as running whenever their host application is open, which
+would otherwise mean recording constantly.
+
+`autorecord.MeetingRecorder` turns that boolean into start/stop decisions. It holds no
+clock and does no sleeping — `update(now, mic_active, free_gb)` is handed the time — so the
+debounce logic is tested directly rather than through timing. Recording will not start
+below `autorecord_min_free_gb`, since a truncated file on a full disk loses the meeting,
+but a low disk never stops a recording already in progress, which would lose what has
+already been captured.
+
 ## Execution modes
 
 ```
@@ -212,6 +230,8 @@ src/transcribe/
 ├── __main__.py      # `python -m transcribe`
 ├── cli.py           # argument parsing, dispatch, doctor, calendar-check
 ├── config.py        # load/save ~/.transcribe/config.yaml + DEFAULT_CONFIG
+├── audio.py         # CoreAudio: which inputs are in use (meeting detection)
+├── autorecord.py    # meeting detection state machine, drives OBS
 ├── media.py         # ffmpeg/ffprobe: probe, extract audio, lossless cut
 ├── segments.py      # Segment and Meeting data model
 ├── whisper.py       # transcription with VAD, timestamped segments, model download

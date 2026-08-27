@@ -37,8 +37,12 @@ diarize = [
 calendar = [
     "pyobjc-framework-EventKit>=10.0",
 ]
+# Automatic recording: detects meetings by microphone activity and drives OBS.
+autorecord = [
+    "obsws-python>=1.6",
+]
 all = [
-    "transcribe[gdrive,diarize,calendar]",
+    "transcribe[gdrive,diarize,calendar,autorecord]",
 ]
 
 [project.scripts]

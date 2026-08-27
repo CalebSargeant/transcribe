@@ -7,6 +7,7 @@ Usage:
   transcribe setup-daemon           - Install background daemon
   transcribe autorecord             - Record meetings automatically via OBS
   transcribe setup-autorecord       - Install the auto-record agent
+  transcribe menubar                - Menu bar app with a manual override
   transcribe config                 - Configure settings
   transcribe doctor                 - Check dependencies and models
   transcribe calendar-check         - Verify macOS Calendar access
@@ -192,7 +193,7 @@ def calendar_check():
     return 0
 
 
-def _report_microphone():
+def _report_devices():
     """Print every audio input and whether it is currently in use.
 
     This is the signal auto-recording keys off, so being able to see it is the
@@ -224,7 +225,31 @@ def _report_microphone():
         else:
             note = "idle"
         print(f"  {note:<26} {name}")
-    print(f"\nMeeting in progress: {'yes' if active else 'no'}\n")
+    from .autorecord import Presence, meeting_in_progress
+    from .camera import DEFAULT_IGNORED_CAMERAS as CAM_IGNORED
+    from .camera import active_cameras, camera_name, cameras
+    from .camera import is_ignored as camera_is_ignored
+
+    active_cams = set(active_cameras())
+    print("\nCameras:")
+    for device_id in cameras():
+        name = camera_name(device_id)
+        if camera_is_ignored(name, CAM_IGNORED):
+            note = "ignored (virtual device)"
+        elif name in active_cams:
+            note = "IN USE"
+        else:
+            note = "idle"
+        print(f"  {note:<26} {name}")
+
+    config = load_config()
+    presence = Presence(mic=bool(active), camera=bool(active_cams))
+    verdict = meeting_in_progress(presence, config)
+    print(f"\nSignals: {presence.describe()}")
+    print(f"Would record: {'yes' if verdict else 'no'}")
+    if presence.mic and not verdict:
+        print("  (microphone alone is not enough; needs the camera on or a calendar meeting)")
+    print()
     return 0
 
 
@@ -236,7 +261,8 @@ def _print_usage():
     print("  transcribe setup-daemon           - Install background daemon")
     print("  transcribe autorecord             - Record meetings automatically via OBS")
     print("  transcribe setup-autorecord       - Install the auto-record agent")
-    print("  transcribe mic                    - Show audio inputs and what is in use")
+    print("  transcribe menubar                - Menu bar app with a manual override")
+    print("  transcribe mic                    - Show inputs and whether a meeting is detected")
     print("  transcribe config                 - Show/edit configuration")
     print("  transcribe doctor                 - Check dependencies and models")
     print("  transcribe calendar-check         - Verify macOS Calendar access")
@@ -297,7 +323,16 @@ def main():
 
         autorecord_watch(load_config())
     elif command == "mic":
-        sys.exit(_report_microphone())
+        sys.exit(_report_devices())
+    elif command == "menubar":
+        from .menubar import MenuBarUnavailable
+        from .menubar import run as run_menubar
+
+        try:
+            run_menubar(load_config())
+        except MenuBarUnavailable as e:
+            print(f"✗ {e}")
+            sys.exit(1)
     elif command == "watch":
         config = _apply_flags(load_config(), selected)
         directory = args[1] if len(args) > 1 else config["watch_directory"]

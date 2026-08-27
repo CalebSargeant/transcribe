@@ -33,10 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `transcribe` stays the released build while `transcribe-dev` is the working tree.
   `TRANSCRIBE_DEV_REPO` points it at another checkout or a git worktree.
 - **Automatic recording**: `transcribe autorecord` starts and stops an OBS recording as
-  meetings begin and end, closing the loop from meeting to notes. Detection is by
-  microphone activity via CoreAudio, so it covers any conferencing app without per-app
-  integration and needs no microphone permission. Virtual inputs are ignored, and debounce
-  either side stops chimes creating files or headset swaps splitting meetings.
+  meetings begin and end, closing the loop from meeting to notes. A recording needs the
+  microphone *and* one corroborating signal, either the camera (CoreMediaIO) or a calendar
+  event in progress, because the microphone alone fires on dictation and voice notes.
+  Both device signals come from macOS and need no permission. Virtual devices are ignored,
+  and debounce either side stops chimes creating files or headset swaps splitting meetings.
+- **Menu bar app** (`transcribe menubar`): live signal display plus Record now, Stop, and
+  Pause auto-record. A manual instruction skips the debounce and overrides detection, which
+  is the only way to capture a meeting attended with camera and microphone off.
 - `transcribe setup-autorecord` installs the launchd agent; `transcribe mic` shows which
   inputs are in use.
 - `transcribe doctor` — checks tools, models, keys, and permissions.

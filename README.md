@@ -121,47 +121,70 @@ TRANSCRIBE_DEV_REPO=~/repos/transcribe/.claude/worktrees/my-branch transcribe-de
 
 ### Recording meetings automatically
 
-`transcribe autorecord` starts an OBS recording when a meeting begins and stops it when the
-meeting ends, which closes the loop: the recording lands in your watch directory and the
-daemon transcribes it without you touching anything.
+`transcribe autorecord` starts an OBS recording when a meeting begins and stops it when it
+ends, which closes the loop: the recording lands in your watch directory and the daemon
+transcribes it.
 
-Detection is by **microphone activity**, read from CoreAudio's
-`kAudioDevicePropertyDeviceIsRunningSomewhere` — the same signal behind the menu-bar
-microphone indicator. That means it works for any app: Meet in a browser tab counts the
-same as Zoom, Teams, or a Slack huddle, with no per-app integration. Reading the property
-needs no microphone permission, because it is not listening.
+**The microphone alone is not enough.** Dictation, voice notes and Siri all hold the
+microphone and none of them are meetings, so recording on that signal alone means recording
+constantly. A recording needs the microphone *and* one corroborating signal:
 
-Two guards keep it from being irritating. The mic must be held for
-`autorecord_start_after_seconds` (default 45) before recording starts, so a notification
-chime does not create a file, and released for `autorecord_stop_after_seconds` (default
-120) before it stops, so swapping a headset does not split a meeting in two. Virtual inputs
-(Steam, BlackHole, Loopback, Krisp) are ignored, since several report as running whenever
-their host app is open.
+| Signal | Precision | Catches |
+| --- | --- | --- |
+| mic + **camera on** | very high | video calls; almost nothing else turns the camera on |
+| mic + **calendar meeting now** | high | scheduled meetings, including camera-off standups |
+| mic alone (`autorecord_mic_only`) | low, opt-in | everything, including things you don't want |
 
-```bash
-pip install 'transcribe[autorecord]'
-```
+Both device signals come from macOS itself: CoreAudio's
+`kAudioDevicePropertyDeviceIsRunningSomewhere` and the CoreMediaIO equivalent, which are
+what the menu bar microphone and camera indicators read. That means any app works, a Meet
+tab in a browser as much as Zoom, with no per-app integration, and neither read needs a
+permission because checking is not capturing.
 
-Enable **OBS > Tools > WebSocket Server Settings**, put the password in
-`~/.transcribe/config.yaml` as `obs_password`, then:
+**One case is genuinely undetectable**: a meeting you join with your camera and microphone
+both off. Nothing short of watching the conferencing app itself can see that, which is why
+there is a menu bar with a manual override.
+
+Virtual devices are filtered out (Steam, BlackHole, Loopback, Krisp, OBS Virtual Camera,
+Continuity Desk View), since several report as running whenever their host app is open.
 
 ```bash
 transcribe mic
 ```
 
+shows every input and camera, what is in use, and whether that combination would record.
+It is the quickest way to see why a meeting was or was not picked up.
+
+### The menu bar
+
+```bash
+pip install 'transcribe[menubar]'
+```
+
+```bash
+transcribe menubar
+```
+
+The title is the status: `●` recording, `○` meeting detected, `◌` idle, `⊘` auto-record
+paused. The menu shows the live signals and offers **Record now**, **Stop recording**, and
+**Pause auto-record**. A manual instruction skips the debounce and overrides detection,
+because an explicit "record this" should not be second-guessed.
+
+### Setup
+
+Enable **OBS > Tools > WebSocket Server Settings**, put the password in
+`~/.transcribe/config.yaml` as `obs_password`, then either run `transcribe menubar`, or
+install the headless agent:
+
 ```bash
 transcribe setup-autorecord
 ```
 
-`transcribe mic` shows every input and what is currently in use, which is the quickest way
-to see why a meeting was or was not picked up.
-
-**Before you turn this on**, be aware it removes the moment where you decide whether to
-record. It will capture 1:1s, personal calls and anything else that uses your microphone,
-and recording other people has consent and data-protection implications that vary by
-jurisdiction. Recordings are also large (roughly 500 MB per hour), so watch the disk;
-`autorecord_min_free_gb` refuses to start below a threshold rather than producing a
-truncated file.
+Recordings are roughly 500 MB per hour, so watch the disk. `autorecord_min_free_gb` refuses
+to start below a threshold rather than writing a truncated file, though it will never
+interrupt a recording already running. Recording other people has consent and
+data-protection implications that vary by jurisdiction, and automation removes the moment
+where you would otherwise decide.
 
 ## Commands
 
@@ -176,7 +199,8 @@ transcribe calendar-check           # grant and verify macOS Calendar access
 transcribe config                   # show configuration and its location
 transcribe autorecord               # record meetings automatically via OBS
 transcribe setup-autorecord         # install the auto-record launchd agent
-transcribe mic                      # show audio inputs and what is in use
+transcribe menubar                  # menu bar app with a manual override
+transcribe mic                      # show inputs, cameras, and whether it would record
 ```
 
 ## How the pieces work

@@ -86,6 +86,14 @@ DEFAULT_CONFIG = {
     # Start/stop an OBS recording when a meeting starts and ends, detected by
     # microphone activity. Needs: pip install 'transcribe[autorecord]' and
     # OBS > Tools > WebSocket Server Settings enabled.
+    # A recording needs the microphone AND one corroborating signal. The mic
+    # alone fires on dictation, voice notes and Siri.
+    "autorecord_require_camera": True,
+    "autorecord_use_calendar": True,
+    # Opt-in, and noisy: recording on microphone activity alone is what makes
+    # always-on capture feel unhinged.
+    "autorecord_mic_only": False,
+    "autorecord_ignored_cameras": [],
     "autorecord_poll_seconds": 5,
     # How long the mic must be held before recording starts. Long enough that a
     # notification chime or a "can you hear me" does not produce a file.

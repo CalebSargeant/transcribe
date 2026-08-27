@@ -5,6 +5,8 @@ Usage:
   transcribe <video_file>           - Transcribe a single file
   transcribe watch <directory>      - Watch directory for new files
   transcribe setup-daemon           - Install background daemon
+  transcribe autorecord             - Record meetings automatically via OBS
+  transcribe setup-autorecord       - Install the auto-record agent
   transcribe config                 - Configure settings
   transcribe doctor                 - Check dependencies and models
   transcribe calendar-check         - Verify macOS Calendar access
@@ -18,7 +20,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import CONFIG_FILE, load_config
-from .daemon import setup_daemon
+from .daemon import setup_autorecord_daemon, setup_daemon
 from .processing import process_video_file
 from .tls import _ensure_tls_ca_bundle
 from .watch import watch_directory
@@ -111,6 +113,18 @@ def doctor():
         print(f"  ✗ {provider} selected but no API key set in {CONFIG_FILE}")
         print("    Without it you still get transcripts, but no notes or summaries.")
 
+    print("\nAuto-recording:")
+    if not _importable("obsws_python"):
+        print("  ✗ obsws-python not installed")
+        print("    install with: pip install 'transcribe[autorecord]'")
+    else:
+        from .autorecord import obs_is_running
+
+        print("  ✓ obsws-python available")
+        print(f"  OBS running: {'yes' if obs_is_running() else 'no'}")
+        if not config.get("obs_password"):
+            print("  - obs_password not set (OBS > Tools > WebSocket Server Settings)")
+
     print("\nSlack:")
     if config.get("slack_bot_token") or config.get("slack_webhook_url"):
         print("  ✓ configured")
@@ -178,12 +192,51 @@ def calendar_check():
     return 0
 
 
+def _report_microphone():
+    """Print every audio input and whether it is currently in use.
+
+    This is the signal auto-recording keys off, so being able to see it is the
+    fastest way to tell why a meeting was or was not picked up.
+    """
+    from .audio import (
+        DEFAULT_IGNORED_DEVICES,
+        AudioUnavailable,
+        active_input_devices,
+        device_name,
+        input_devices,
+        is_ignored,
+    )
+
+    try:
+        devices = input_devices()
+    except AudioUnavailable as e:
+        print(f"✗ {e}")
+        return 1
+
+    active = set(active_input_devices())
+    print("\nAudio inputs:")
+    for device_id in devices:
+        name = device_name(device_id)
+        if is_ignored(name, DEFAULT_IGNORED_DEVICES):
+            note = "ignored (virtual device)"
+        elif name in active:
+            note = "IN USE"
+        else:
+            note = "idle"
+        print(f"  {note:<26} {name}")
+    print(f"\nMeeting in progress: {'yes' if active else 'no'}\n")
+    return 0
+
+
 def _print_usage():
     print("Usage:")
     print("  transcribe <video_file> [--json] [--flat] [--no-split]")
     print("                                    - Transcribe a single file")
     print("  transcribe watch [directory]      - Watch directory for new files")
     print("  transcribe setup-daemon           - Install background daemon")
+    print("  transcribe autorecord             - Record meetings automatically via OBS")
+    print("  transcribe setup-autorecord       - Install the auto-record agent")
+    print("  transcribe mic                    - Show audio inputs and what is in use")
     print("  transcribe config                 - Show/edit configuration")
     print("  transcribe doctor                 - Check dependencies and models")
     print("  transcribe calendar-check         - Verify macOS Calendar access")
@@ -237,6 +290,14 @@ def main():
     elif command == "setup-daemon":
         config = load_config()
         setup_daemon(config)
+    elif command == "setup-autorecord":
+        setup_autorecord_daemon(load_config())
+    elif command == "autorecord":
+        from .autorecord import watch as autorecord_watch
+
+        autorecord_watch(load_config())
+    elif command == "mic":
+        sys.exit(_report_microphone())
     elif command == "watch":
         config = _apply_flags(load_config(), selected)
         directory = args[1] if len(args) > 1 else config["watch_directory"]

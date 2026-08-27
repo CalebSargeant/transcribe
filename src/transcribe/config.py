@@ -82,6 +82,26 @@ DEFAULT_CONFIG = {
     # Names that recur in your meetings; helps map voices to real people when no
     # calendar attendee list is available.
     "known_participants": [],
+    # --- Auto-recording (transcribe autorecord) ----------------------------
+    # Start/stop an OBS recording when a meeting starts and ends, detected by
+    # microphone activity. Needs: pip install 'transcribe[autorecord]' and
+    # OBS > Tools > WebSocket Server Settings enabled.
+    "autorecord_poll_seconds": 5,
+    # How long the mic must be held before recording starts. Long enough that a
+    # notification chime or a "can you hear me" does not produce a file.
+    "autorecord_start_after_seconds": 45,
+    # How long it must be released before recording stops. Long enough that
+    # swapping a headset does not chop a meeting in two.
+    "autorecord_stop_after_seconds": 120,
+    # Refuse to start below this much free space: a truncated recording on a
+    # full disk loses the meeting entirely.
+    "autorecord_min_free_gb": 10,
+    # Virtual/loopback inputs that report as running whenever their host app is
+    # open. Empty means use the built-in list.
+    "autorecord_ignored_devices": [],
+    "obs_host": "localhost",
+    "obs_port": 4455,
+    "obs_password": "",
     # --- Calendar ----------------------------------------------------------
     # Match the recording against calendar events for real titles and attendees.
     # Needs: pip install 'transcribe[calendar]' and Calendar permission.

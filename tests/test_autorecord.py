@@ -3,7 +3,9 @@
 import pytest
 
 from transcribe.audio import DEFAULT_IGNORED_DEVICES, is_ignored
-from transcribe.autorecord import MeetingRecorder
+from transcribe.autorecord import MeetingRecorder, Presence, meeting_in_progress
+from transcribe.camera import DEFAULT_IGNORED_CAMERAS
+from transcribe.camera import is_ignored as camera_ignored
 
 
 @pytest.fixture
@@ -150,3 +152,115 @@ def test_virtual_devices_are_ignored(name):
 )
 def test_real_devices_are_not_ignored(name):
     assert is_ignored(name, DEFAULT_IGNORED_DEVICES) is False
+
+
+# --- what counts as a meeting ------------------------------------------------
+
+
+def test_mic_alone_is_not_a_meeting():
+    """Dictation, voice notes and Siri all hold the mic and none are meetings."""
+    assert meeting_in_progress(Presence(mic=True)) is False
+
+
+def test_mic_and_camera_is_a_meeting():
+    """Almost nothing but a video call turns the camera on."""
+    assert meeting_in_progress(Presence(mic=True, camera=True)) is True
+
+
+def test_mic_and_calendar_is_a_meeting():
+    """Catches the audio-only standup, which mic+camera would miss."""
+    assert meeting_in_progress(Presence(mic=True, calendar_meeting=True)) is True
+
+
+def test_camera_without_mic_is_not_a_meeting():
+    """A camera check or a photo is not a conversation."""
+    assert meeting_in_progress(Presence(camera=True)) is False
+
+
+def test_calendar_without_mic_is_not_a_meeting():
+    """A meeting in the diary you never joined must not record an empty room."""
+    assert meeting_in_progress(Presence(calendar_meeting=True)) is False
+
+
+def test_nothing_is_not_a_meeting():
+    assert meeting_in_progress(Presence()) is False
+
+
+def test_calendar_signal_can_be_disabled():
+    presence = Presence(mic=True, calendar_meeting=True)
+    assert meeting_in_progress(presence, {"autorecord_use_calendar": False}) is False
+    # Camera still works as the corroborating signal.
+    assert (
+        meeting_in_progress(Presence(mic=True, camera=True), {"autorecord_use_calendar": False})
+        is True
+    )
+
+
+def test_mic_only_mode_is_opt_in():
+    presence = Presence(mic=True)
+    assert meeting_in_progress(presence) is False
+    assert meeting_in_progress(presence, {"autorecord_mic_only": True}) is True
+
+
+def test_the_silent_attendee_is_not_detected_without_a_calendar_entry():
+    """Joining with everything off is undetectable; that is what manual is for."""
+    assert meeting_in_progress(Presence(mic=False, camera=False)) is False
+
+
+# --- manual override ---------------------------------------------------------
+
+
+def test_manual_start_skips_the_debounce(recorder):
+    """An explicit instruction should not wait 45 seconds to take effect."""
+    assert recorder.update(0, False, manual=True) == "start"
+    assert recorder.recording is True
+
+
+def test_manual_stop_is_immediate(recorder):
+    recorder.update(0, True)
+    recorder.update(50, True)
+    assert recorder.recording is True
+    assert recorder.update(60, True, manual=False) == "stop"
+    assert recorder.recording is False
+
+
+def test_manual_beats_detection(recorder):
+    """Manual off must hold even while a meeting is plainly in progress."""
+    assert recorder.update(0, True, manual=False) is None
+    assert recorder.update(100, True, manual=False) is None
+    assert recorder.recording is False
+
+
+def test_manual_start_is_idempotent(recorder):
+    assert recorder.update(0, False, manual=True) == "start"
+    assert recorder.update(10, False, manual=True) is None
+
+
+def test_detection_resumes_cleanly_after_manual_control(recorder):
+    """Releasing the override must not leave a stale countdown behind."""
+    recorder.update(0, False, manual=True)
+    recorder.update(10, False, manual=False)
+    assert recorder.recording is False
+    assert recorder.update(20, True) is None
+    assert recorder.update(64, True) is None  # countdown restarts at 20
+    assert recorder.update(65, True) == "start"
+
+
+# --- virtual cameras ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name", ["OBS Virtual Camera", "Capture screen 0", "mmhmm camera", "Snap Camera"]
+)
+def test_virtual_cameras_are_ignored(name):
+    assert camera_ignored(name, DEFAULT_IGNORED_CAMERAS) is True
+
+
+@pytest.mark.parametrize("name", ["Logitech BRIO", "FaceTime HD Camera"])
+def test_real_cameras_are_not_ignored(name):
+    assert camera_ignored(name, DEFAULT_IGNORED_CAMERAS) is False
+
+
+def test_iphone_desk_view_is_ignored():
+    """Continuity Desk View is a second stream of the same camera, not a call."""
+    assert camera_ignored("Caleb's iPhone Desk View Camera", DEFAULT_IGNORED_CAMERAS) is True

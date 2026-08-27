@@ -1,22 +1,34 @@
 """Start and stop an OBS recording when a meeting starts and ends.
 
-Detection is by microphone activity (see ``audio.py``) rather than by
-recognising conferencing apps, so Meet in a browser tab works the same as Zoom,
-Teams, or a Slack huddle.
+Microphone activity alone is too eager: dictation, voice notes and Siri all use
+the microphone and none of them are meetings. So a recording needs the mic *and*
+one corroborating signal:
 
-Two guards keep it from being annoying. A meeting has to hold the microphone for
-``autorecord_start_after_seconds`` before recording begins, so a notification
-chime or a quick "can you hear me" does not produce a file. And it has to release
-it for ``autorecord_stop_after_seconds`` before recording stops, so a pause to
-switch headsets does not chop a meeting in two.
+* **the camera is on** -- almost nothing but a video call turns it on, which
+  makes it the highest-precision signal available, or
+* **the calendar says a meeting is happening now** -- which is what every
+  hosted meeting recorder actually keys off, and is the only thing that catches
+  a meeting you join with the camera off.
+
+Neither covers a meeting you attend silently with everything off. Nothing
+short of watching the conferencing app can, which is why the menu bar has a
+manual toggle: an explicit "record this" always wins.
+
+Two guards stop it being annoying. A meeting must hold the signal for
+``autorecord_start_after_seconds`` before recording begins, so a chime does not
+produce a file, and release it for ``autorecord_stop_after_seconds`` before it
+stops, so swapping a headset does not chop a meeting in two. A manual toggle
+skips both, because an explicit instruction should not be second-guessed.
 """
 
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from .audio import DEFAULT_IGNORED_DEVICES, microphone_in_use
+from .camera import DEFAULT_IGNORED_CAMERAS, camera_in_use
 
 # Defaults chosen so a real meeting is caught and a stray chime is not.
 DEFAULT_POLL_SECONDS = 5
@@ -28,6 +40,41 @@ DEFAULT_MIN_FREE_GB = 10
 
 class ObsUnavailable(RuntimeError):
     """Raised when OBS cannot be reached over obs-websocket."""
+
+
+@dataclass
+class Presence:
+    """What the machine can currently observe about whether you are in a meeting."""
+
+    mic: bool = False
+    camera: bool = False
+    calendar_meeting: bool = False
+
+    def describe(self):
+        parts = [
+            f"mic={'on' if self.mic else 'off'}",
+            f"camera={'on' if self.camera else 'off'}",
+            f"calendar={'meeting' if self.calendar_meeting else 'clear'}",
+        ]
+        return ", ".join(parts)
+
+
+def meeting_in_progress(presence, config=None):
+    """Decide whether ``presence`` looks like a meeting worth recording.
+
+    The microphone is necessary but never sufficient. Requiring a second signal
+    is what separates a meeting from a voice note.
+    """
+    config = config or {}
+    if not presence.mic:
+        return False
+    if config.get("autorecord_require_camera", True) and presence.camera:
+        return True
+    if config.get("autorecord_use_calendar", True) and presence.calendar_meeting:
+        return True
+    # Deliberately opt-in: on its own the microphone fires on dictation and
+    # voice notes, which is what makes always-on recording feel unhinged.
+    return bool(config.get("autorecord_mic_only", False))
 
 
 def _log(message):
@@ -124,9 +171,25 @@ class MeetingRecorder:
         self._active_since = None
         self._idle_since = None
 
-    def update(self, now, mic_active, free_gb=None):
-        """Advance the state machine. Returns 'start', 'stop', or None."""
-        if mic_active:
+    def update(self, now, meeting_active, free_gb=None, manual=None):
+        """Advance the state machine. Returns 'start', 'stop', or None.
+
+        ``manual`` overrides detection entirely: True forces recording on and
+        False forces it off, both without debounce, because an explicit
+        instruction should take effect immediately.
+        """
+        if manual is not None:
+            self._active_since = None
+            self._idle_since = None
+            if manual and not self.recording:
+                self.recording = True
+                return "start"
+            if not manual and self.recording:
+                self.recording = False
+                return "stop"
+            return None
+
+        if meeting_active:
             self._idle_since = None
             if self._active_since is None:
                 self._active_since = now
@@ -147,29 +210,90 @@ class MeetingRecorder:
         return None
 
 
-def watch(config=None, poll_seconds=None, iterations=None):
+def calendar_meeting_now(config, cache=None):
+    """True when a calendar event is in progress right now.
+
+    Results are cached for a minute: the calendar is polled every few seconds
+    and event boundaries do not move that fast.
+    """
+    from datetime import timedelta
+
+    if not config.get("autorecord_use_calendar", True):
+        return False
+
+    cache = cache if cache is not None else {}
+    now = time.monotonic()
+    if cache.get("expires", 0) > now:
+        return cache["value"]
+
+    try:
+        from .calendars import fetch_macos_events
+
+        wall = datetime.now()
+        events = fetch_macos_events(
+            wall - timedelta(minutes=5), wall + timedelta(minutes=5), config
+        )
+        value = bool(events)
+    except Exception:
+        # Calendars are a bonus signal; never let them break detection.
+        value = False
+
+    cache["value"] = value
+    cache["expires"] = now + 60
+    return value
+
+
+def current_presence(config, calendar_cache=None):
+    """Sample every meeting signal the machine can see."""
+    mic_ignored = tuple(config.get("autorecord_ignored_devices") or DEFAULT_IGNORED_DEVICES)
+    cam_ignored = tuple(config.get("autorecord_ignored_cameras") or DEFAULT_IGNORED_CAMERAS)
+    return Presence(
+        mic=microphone_in_use(mic_ignored),
+        camera=camera_in_use(cam_ignored),
+        calendar_meeting=calendar_meeting_now(config, calendar_cache),
+    )
+
+
+def watch(config=None, poll_seconds=None, iterations=None, control=None):
     """Poll for meetings and drive OBS until interrupted.
 
+    ``control`` is an optional object with a ``manual`` attribute (True, False,
+    or None) so a menu bar app can force recording on or off.
     ``iterations`` bounds the loop for testing; None runs forever.
     """
     config = config or {}
     poll = float(poll_seconds or config.get("autorecord_poll_seconds", DEFAULT_POLL_SECONDS))
-    ignored = tuple(config.get("autorecord_ignored_devices") or DEFAULT_IGNORED_DEVICES)
     watch_dir = config.get("watch_directory") or "."
 
     recorder = MeetingRecorder(config)
+    rules = ["mic + camera"]
+    if config.get("autorecord_use_calendar", True):
+        rules.append("mic + calendar meeting")
+    if config.get("autorecord_mic_only", False):
+        rules.append("mic alone")
+    _log(f"Watching for meetings. Will record on: {' or '.join(rules)}")
     _log(
-        f"Watching for meetings (start after {recorder.start_after:.0f}s of mic activity, "
-        f"stop after {recorder.stop_after:.0f}s of silence)"
+        f"Start after {recorder.start_after:.0f}s, stop after {recorder.stop_after:.0f}s, "
+        f"minimum {recorder.min_free_gb:.0f} GB free"
     )
 
     client = None
+    calendar_cache = {}
+    previous = None
     count = 0
     while iterations is None or count < iterations:
         count += 1
         try:
+            presence = current_presence(config, calendar_cache)
+            if previous != presence:
+                _log(f"Signals: {presence.describe()}")
+                previous = presence
+
             action = recorder.update(
-                time.monotonic(), microphone_in_use(ignored), free_gigabytes(watch_dir)
+                time.monotonic(),
+                meeting_in_progress(presence, config),
+                free_gigabytes(watch_dir),
+                manual=getattr(control, "manual", None),
             )
 
             if action == "start":

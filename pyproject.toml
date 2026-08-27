@@ -41,8 +41,13 @@ calendar = [
 autorecord = [
     "obsws-python>=1.6",
 ]
+# Menu bar app: manual override and a view of what the detector can see.
+menubar = [
+    "obsws-python>=1.6",
+    "rumps>=0.4",
+]
 all = [
-    "transcribe[gdrive,diarize,calendar,autorecord]",
+    "transcribe[gdrive,diarize,calendar,autorecord,menubar]",
 ]
 
 [project.scripts]

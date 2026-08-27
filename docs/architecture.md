@@ -180,6 +180,14 @@ Virtual and loopback devices (Steam, BlackHole, Loopback, Krisp, aggregate devic
 filtered out: several report as running whenever their host application is open, which
 would otherwise mean recording constantly.
 
+`camera.py` is the video twin, reading CoreMediaIO's
+`kCMIODevicePropertyDeviceIsRunningSomewhere`.
+
+`meeting_in_progress` combines them. The microphone is necessary but never sufficient,
+because dictation and voice notes use it too; a recording needs the mic plus either the
+camera or a calendar event in progress. A meeting attended with both devices off is not
+detectable by any of this, which is what the menu bar's manual override exists for.
+
 `autorecord.MeetingRecorder` turns that boolean into start/stop decisions. It holds no
 clock and does no sleeping — `update(now, mic_active, free_gb)` is handed the time — so the
 debounce logic is tested directly rather than through timing. Recording will not start
@@ -232,6 +240,8 @@ src/transcribe/
 ├── config.py        # load/save ~/.transcribe/config.yaml + DEFAULT_CONFIG
 ├── audio.py         # CoreAudio: which inputs are in use (meeting detection)
 ├── autorecord.py    # meeting detection state machine, drives OBS
+├── camera.py        # CoreMediaIO: which cameras are in use
+├── menubar.py       # menu bar app: manual override and signal visibility
 ├── media.py         # ffmpeg/ffprobe: probe, extract audio, lossless cut
 ├── segments.py      # Segment and Meeting data model
 ├── whisper.py       # transcription with VAD, timestamped segments, model download

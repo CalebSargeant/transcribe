@@ -1,5 +1,6 @@
 """Tests for transcribe.whisper: model resolution, download, transcription."""
 
+import json
 import subprocess
 import sys
 
@@ -60,7 +61,7 @@ def test_validate_model_name_rejects_invalid(name):
 def test_ensure_model_rejects_invalid_before_download(monkeypatch):
     """An invalid model name is rejected before any path or URL is built."""
     download_called = []
-    monkeypatch.setattr(whisper, "_download_model", lambda *a, **k: download_called.append(a))
+    monkeypatch.setattr(whisper, "_download", lambda *a, **k: download_called.append(a))
     with pytest.raises(ValueError, match="Invalid whisper_model"):
         _ensure_model("../../evil")
     assert download_called == []
@@ -80,7 +81,7 @@ def test_ensure_model_prefers_bundled_path(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
 
     download_called = []
-    monkeypatch.setattr(whisper, "_download_model", lambda *a, **k: download_called.append(a))
+    monkeypatch.setattr(whisper, "_download", lambda *a, **k: download_called.append(a))
 
     path = _ensure_model("base")
     assert path == str(bundled)
@@ -96,21 +97,21 @@ def test_ensure_model_falls_back_to_home_and_downloads(monkeypatch, tmp_path):
 
     downloads = []
 
-    def fake_download(model_name, dest_path):
-        downloads.append((model_name, dest_path))
+    def fake_download(url, dest_path, label):
+        downloads.append((url, dest_path))
         # Pretend the download created the file.
         import os
 
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         open(dest_path, "wb").close()
 
-    monkeypatch.setattr(whisper, "_download_model", fake_download)
+    monkeypatch.setattr(whisper, "_download", fake_download)
 
     path = _ensure_model("small")
 
     expected = str(home / ".whisper-models" / "ggml-small.bin")
     assert path == expected
-    assert downloads == [("small", expected)]
+    assert downloads == [(f"{whisper.HF_MODEL_BASE_URL}/ggml-small.bin", expected)]
 
 
 def test_ensure_model_uses_existing_home_model_without_download(monkeypatch, tmp_path):
@@ -123,7 +124,7 @@ def test_ensure_model_uses_existing_home_model_without_download(monkeypatch, tmp
     monkeypatch.setattr("os.path.expanduser", lambda p: p.replace("~", str(home)))
 
     download_called = []
-    monkeypatch.setattr(whisper, "_download_model", lambda *a, **k: download_called.append(a))
+    monkeypatch.setattr(whisper, "_download", lambda *a, **k: download_called.append(a))
 
     path = _ensure_model("base")
     assert path == str(existing)
@@ -186,32 +187,56 @@ def test_download_model_cleans_up_part_on_failure(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def whisper_env(monkeypatch, tmp_path):
-    """Mock ffmpeg/whisper-cli discovery, model resolution, and subprocess."""
+def whisper_env(monkeypatch):
+    """Mock tool discovery and model resolution, and fake whisper's JSON output.
+
+    whisper-cli writes its result to ``<-of stem>.json``; the fake run() writes
+    that file so the parser has something real to read.
+    """
     monkeypatch.setattr(whisper.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(whisper, "_ensure_model", lambda name="base": "/models/ggml-base.bin")
+    monkeypatch.setattr(whisper, "_ensure_vad_model", lambda: "/models/ggml-vad.bin")
 
     calls = []
-
-    whisper_stdout = (
-        "whisper_init: loading\nggml_debug: x\n[00:00] noise\nHello world.\nMore text.\n"
-    )
+    payload = {
+        "transcription": [
+            {
+                "timestamps": {"from": "00:00:00,000", "to": "00:00:02,500"},
+                "text": " Hello world.",
+            },
+            {
+                "timestamps": {"from": "00:01:05,000", "to": "00:01:07,000"},
+                "text": " More text.",
+            },
+            {"timestamps": {"from": "00:02:00,000", "to": "00:02:01,000"}, "text": "   "},
+        ]
+    }
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        # The second subprocess call (whisper) returns transcription on stdout.
         if "whisper-cli" in cmd[0]:
-            return subprocess.CompletedProcess(cmd, 0, stdout=whisper_stdout, stderr="")
+            stem = cmd[cmd.index("-of") + 1]
+            with open(stem + ".json", "w") as handle:
+                json.dump(payload, handle)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(whisper.subprocess, "run", fake_run)
     return calls
 
 
-def test_transcribe_video_parses_stdout(whisper_env, base_config):
+def test_transcribe_video_joins_segment_text(whisper_env, base_config):
     text = transcribe_video("/some/video.mov", base_config)
-    # Lines starting with whisper_, ggml_, or [ are filtered out.
+    # Blank segments are dropped; the rest are joined with a single space.
     assert text == "Hello world. More text."
+
+
+def test_transcribe_segments_carry_timestamps(whisper_env, base_config):
+    segments, audio_path = whisper.transcribe_video_segments("/some/video.mov", base_config)
+    whisper.os.unlink(audio_path)
+    assert [(s.start, s.end, s.text) for s in segments] == [
+        (0.0, 2.5, "Hello world."),
+        (65.0, 67.0, "More text."),
+    ]
 
 
 def test_transcribe_video_invokes_ffmpeg_then_whisper(whisper_env, base_config):
@@ -223,41 +248,45 @@ def test_transcribe_video_invokes_ffmpeg_then_whisper(whisper_env, base_config):
     assert "/models/ggml-base.bin" in whisper_env[1]
 
 
-def test_transcribe_video_passes_configured_model(monkeypatch, base_config):
-    monkeypatch.setattr(whisper.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(
-        whisper.subprocess,
-        "run",
-        lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr=""),
-    )
+def test_transcribe_video_enables_vad_by_default(whisper_env, base_config):
+    transcribe_video("/some/video.mov", base_config)
+    assert "--vad" in whisper_env[1]
+    assert "/models/ggml-vad.bin" in whisper_env[1]
+
+
+def test_transcribe_video_vad_can_be_disabled(whisper_env, base_config):
+    base_config["whisper_vad"] = False
+    transcribe_video("/some/video.mov", base_config)
+    assert "--vad" not in whisper_env[1]
+
+
+def test_transcribe_video_passes_initial_prompt(whisper_env, base_config):
+    base_config["whisper_prompt"] = "Terraform, MikroTik, BGP"
+    transcribe_video("/some/video.mov", base_config)
+    assert whisper_env[1][whisper_env[1].index("--prompt") + 1] == "Terraform, MikroTik, BGP"
+
+
+def test_transcribe_video_passes_configured_model(whisper_env, base_config, monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        whisper, "_ensure_model", lambda name="base": seen.setdefault("model", name)
+        whisper, "_ensure_model", lambda name="base": seen.setdefault("model", name) or "/m.bin"
     )
     base_config["whisper_model"] = "medium"
     transcribe_video("/v.mov", base_config)
     assert seen["model"] == "medium"
 
 
-def test_transcribe_video_cleans_up_temp_audio(monkeypatch, base_config):
-    monkeypatch.setattr(whisper.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(whisper, "_ensure_model", lambda name="base": "/m.bin")
+def test_transcribe_video_cleans_up_temp_audio(whisper_env, base_config, monkeypatch):
+    extracted = []
     monkeypatch.setattr(
-        whisper.subprocess,
-        "run",
-        lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, stdout="text", stderr=""),
+        whisper, "extract_audio", lambda video, audio: extracted.append(audio) or audio
     )
 
-    removed = []
-    real_exists = whisper.os.path.exists
-    monkeypatch.setattr(whisper.os.path, "exists", lambda p: True)
-    monkeypatch.setattr(whisper.os, "unlink", lambda p: removed.append(p))
-
     transcribe_video("/v.mov", base_config)
-    # The temp .wav was unlinked in the finally block.
-    assert any(p.endswith(".wav") for p in removed)
-    # silence unused warning
-    assert real_exists is not None
+
+    # The temp .wav is created, then removed once the transcript is parsed.
+    assert extracted and extracted[0].endswith(".wav")
+    assert not whisper.os.path.exists(extracted[0])
 
 
 def test_transcribe_video_exits_on_subprocess_error(monkeypatch, base_config):

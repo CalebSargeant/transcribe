@@ -27,7 +27,7 @@ def test_default_provider_is_claude():
     assert DEFAULT_CONFIG["llm_provider"] == "claude"
     assert DEFAULT_CONFIG["anthropic_model"] == "claude-haiku-4-5-20251001"
     assert DEFAULT_CONFIG["openai_model"] == "gpt-4o-mini"
-    assert DEFAULT_CONFIG["whisper_model"] == "base"
+    assert DEFAULT_CONFIG["whisper_model"] == "large-v3-turbo"
 
 
 def test_load_config_creates_default_when_missing(patched_config_paths, capsys):

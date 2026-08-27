@@ -1,25 +1,32 @@
-"""File movement and end-to-end video processing pipeline."""
+"""End-to-end pipeline: transcribe, split, attribute, summarize, file, notify."""
 
 import json
+import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 
+from .calendars import events_for_recording
 from .config import load_config
+from .diarize import diarize_meeting
 from .llm import (
     extract_action_items_with_openai,
     generate_title_description_with_openai,
+    is_configured,
     summarize_with_openai,
 )
+from .media import cut_video, probe_duration, recording_started_at
+from .notes import generate_notes, notes_action_items, resolve_speaker_names
+from .render import render_html, render_markdown, render_transcript, safe_folder_name
+from .segmentation import split_into_meetings
+from .segments import format_timestamp
 from .slack import send_slack_notification
-from .whisper import transcribe_video
+from .whisper import transcribe_video, transcribe_video_segments
 
 
 def _llm_configured(config):
     """Return True if a key is set for the selected LLM provider."""
-    provider = (config.get("llm_provider") or "claude").strip().lower()
-    if provider == "openai":
-        return bool(config.get("openai_api_key"))
-    return bool(config.get("anthropic_api_key"))
+    return is_configured(config)
 
 
 def move_files_to_destination(video_path, transcript_path, summary_path, config):
@@ -59,16 +66,241 @@ def move_files_to_destination(video_path, transcript_path, summary_path, config)
     return moved_files
 
 
-def process_video_file(video_file, config=None, write_json=False):
-    """Process a video file: transcribe, summarize, move, and notify.
+def _unique_folder(base_dir, name):
+    """Return an unused folder path under ``base_dir``, suffixing on collision."""
+    candidate = base_dir / name
+    counter = 2
+    while candidate.exists():
+        candidate = base_dir / f"{name} ({counter})"
+        counter += 1
+    return candidate
 
-    If ``write_json`` is True, also write ``<video>_result.json`` next to the
-    video containing title, description, transcript, summary, action items,
-    and the source file path.
+
+def _folder_name_for(meeting, recording_start, notes):
+    """Build the per-meeting folder name: an ISO date plus the meeting title."""
+    title = (notes or {}).get("title") or meeting.title or f"Meeting {meeting.index}"
+    if recording_start is not None:
+        started = datetime.fromtimestamp(recording_start.timestamp() + meeting.start)
+        prefix = started.strftime("%Y-%m-%d %H%M")
+        return safe_folder_name(f"{prefix} {title}")
+    return safe_folder_name(title)
+
+
+def _write_meeting_outputs(
+    meeting, notes, dest_dir, video_file, recording_start, config, split_video
+):
+    """Write every artifact for one meeting into its own folder."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written = {"folder": str(dest_dir)}
+    source_name = Path(video_file).name
+
+    notes_md = render_markdown(meeting, notes, recording_start, source_name)
+    (dest_dir / "notes.md").write_text(notes_md, encoding="utf-8")
+    written["notes_markdown"] = str(dest_dir / "notes.md")
+
+    (dest_dir / "notes.html").write_text(
+        render_html(meeting, notes, recording_start, source_name), encoding="utf-8"
+    )
+    written["notes_html"] = str(dest_dir / "notes.html")
+
+    (dest_dir / "transcript.txt").write_text(render_transcript(meeting), encoding="utf-8")
+    written["transcript"] = str(dest_dir / "transcript.txt")
+
+    if notes and notes.get("summary"):
+        (dest_dir / "summary.txt").write_text(notes["summary"] + "\n", encoding="utf-8")
+        written["summary"] = str(dest_dir / "summary.txt")
+
+    payload = meeting.to_dict()
+    payload["source_file"] = str(video_file)
+    payload["recording_started_at"] = (
+        recording_start.isoformat() if recording_start is not None else None
+    )
+    (dest_dir / "notes.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    written["json"] = str(dest_dir / "notes.json")
+
+    if split_video:
+        clip = dest_dir / f"{safe_folder_name(dest_dir.name)}{Path(video_file).suffix}"
+        try:
+            cut_video(video_file, str(clip), meeting.start, meeting.end)
+            written["video"] = str(clip)
+            print(f"  ✓ Video clip: {clip.name}")
+        except Exception as e:
+            print(f"  Warning: could not cut video clip ({type(e).__name__}: {e})")
+
+    return written
+
+
+def process_recording(video_file, config=None, write_json=False):
+    """Process a recording into one folder of notes per meeting it contains.
+
+    Returns the list of per-meeting result dicts.
     """
     if config is None:
         config = load_config()
 
+    video_file = os.path.abspath(video_file)
+    print(f"\n{'=' * 60}")
+    print(f"Processing: {Path(video_file).name}")
+    print(f"{'=' * 60}\n")
+
+    duration = probe_duration(video_file)
+    recording_start = recording_started_at(video_file)
+    if recording_start is not None:
+        print(f"Recording started {recording_start:%Y-%m-%d %H:%M}, {duration / 60:.0f} minutes")
+
+    segments, audio_path = transcribe_video_segments(video_file, config)
+    print(
+        f"✓ Transcribed {len(segments)} segments "
+        f"({sum(len(s.text.split()) for s in segments):,} words)"
+    )
+
+    try:
+        calendar_events = events_for_recording(recording_start, duration, config)
+        if calendar_events:
+            print(f"✓ Found {len(calendar_events)} calendar event(s) covering this recording")
+            for event in calendar_events:
+                print(f"    {event['start'][11:16]}  {event['title']}")
+
+        print("\n--- Identifying meetings ---")
+        meetings = split_into_meetings(
+            segments,
+            config=config,
+            calendar_events=calendar_events,
+            recording_start=recording_start,
+        )
+        print(f"✓ Found {len(meetings)} meeting(s) in this recording")
+        for meeting in meetings:
+            label = meeting.title or "(untitled)"
+            print(f"    {format_timestamp(meeting.start)}-{format_timestamp(meeting.end)}  {label}")
+
+        results = []
+        base_dest = Path(config.get("destination_directory") or Path(video_file).parent)
+        split_video = bool(config.get("split_video", True)) and len(meetings) > 1
+
+        for meeting in meetings:
+            print(
+                f"\n--- Meeting {meeting.index}/{len(meetings)}: {meeting.title or 'untitled'} ---"
+            )
+
+            if config.get("diarization_enabled", True):
+                print("  Identifying speakers...")
+                known = meeting.attendees or config.get("known_participants") or []
+                if diarize_meeting(
+                    meeting,
+                    audio_path,
+                    config,
+                    num_speakers=len(known) if known else None,
+                ):
+                    print(f"  ✓ Separated {len(meeting.speakers())} voice(s)")
+                    named = resolve_speaker_names(meeting, config, known)
+                    if named:
+                        print(
+                            "  ✓ Named: "
+                            + ", ".join(f"{label} → {name}" for label, name in named.items())
+                        )
+
+            # Distinguish "no provider configured" from "the call failed": both
+            # yield no notes, but only one of them is the user's doing.
+            if not is_configured(config):
+                notes = None
+                print("  Notes skipped (no LLM provider configured)")
+            else:
+                notes = generate_notes(meeting, config)
+                if notes:
+                    meeting.title = notes.get("title") or meeting.title
+                    meeting.notes = notes
+                    print(f"  ✓ Notes: {meeting.title}")
+                    steps = notes.get("next_steps") or []
+                    if steps:
+                        print(f"  ✓ {len(steps)} next step(s)")
+                else:
+                    print("  ✗ Notes generation FAILED (see the warning above)")
+
+            folder = _unique_folder(base_dest, _folder_name_for(meeting, recording_start, notes))
+            written = _write_meeting_outputs(
+                meeting, notes, folder, video_file, recording_start, config, split_video
+            )
+            print(f"  ✓ Saved to {folder}")
+
+            action_items = notes_action_items(notes)
+            if config.get("slack_webhook_url") or config.get("slack_bot_token"):
+                send_slack_notification(
+                    Path(video_file).name,
+                    written["folder"],
+                    meeting.title,
+                    (notes or {}).get("summary"),
+                    action_items,
+                    config,
+                )
+
+            results.append(
+                {
+                    "title": meeting.title,
+                    "folder": written["folder"],
+                    "files": written,
+                    "action_items": action_items,
+                    "notes": notes,
+                }
+            )
+
+        # The source recording is only moved once every meeting has been written,
+        # so a failure part-way through never loses the original.
+        if config.get("destination_directory") and config.get("move_source_video", True):
+            _archive_source(video_file, base_dest, results, split_video)
+
+        print(f"\n{'=' * 60}")
+        print(f"✓ Processing complete — {len(results)} meeting(s)")
+        print(f"{'=' * 60}\n")
+        return results
+
+    finally:
+        if os.path.exists(audio_path):
+            os.unlink(audio_path)
+
+
+def _archive_source(video_file, base_dest, results, was_split):
+    """Move the source recording next to its notes, or into an archive folder."""
+    try:
+        if len(results) == 1 and not was_split:
+            # One meeting: the recording belongs in that meeting's folder.
+            destination = Path(results[0]["folder"]) / Path(video_file).name
+        else:
+            archive = base_dest / "Source recordings"
+            archive.mkdir(parents=True, exist_ok=True)
+            destination = archive / Path(video_file).name
+        shutil.move(video_file, destination)
+        print(f"\n✓ Moved source recording to {destination}")
+    except Exception as e:
+        print(f"Warning: could not move source recording ({type(e).__name__}: {e})")
+
+
+def process_video_file(video_file, config=None, write_json=False):
+    """Process a video file.
+
+    Runs the meeting-aware pipeline by default. Setting ``meeting_mode: false``
+    in config selects the original flat behaviour: one transcript, one summary,
+    one folder named after the video file.
+    """
+    if config is None:
+        config = load_config()
+
+    if config.get("meeting_mode", True):
+        try:
+            process_recording(video_file, config, write_json=write_json)
+        except Exception as e:
+            print(f"\nError processing {video_file}: {e}")
+            import traceback
+
+            traceback.print_exc()
+        return
+
+    _process_video_file_flat(video_file, config, write_json)
+
+
+def _process_video_file_flat(video_file, config, write_json=False):
+    """The original single-transcript pipeline, kept for ``meeting_mode: false``."""
     print(f"\n{'=' * 60}")
     print(f"Processing: {Path(video_file).name}")
     print(f"{'=' * 60}\n")

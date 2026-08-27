@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Run transcribe from a local checkout instead of the Homebrew release.
+#
+# Homebrew installs a frozen PyInstaller build, which is what you want day to
+# day but useless while changing the code. This runs the working tree instead,
+# so `transcribe` stays the released version and `transcribe-dev` is whatever
+# you are editing.
+#
+#   transcribe-dev meeting.mov                     # the default checkout
+#   TRANSCRIBE_DEV_REPO=/path/to/worktree \
+#     transcribe-dev meeting.mov                   # a specific worktree
+#
+# Install once:
+#   ln -sf "$PWD/scripts/transcribe-dev" ~/.local/bin/transcribe-dev
+#
+# The symlink resolves the repo from its own location, so a checkout that moves
+# keeps working and a worktree needs no separate symlink.
+
+set -euo pipefail
+
+if [[ -n "${TRANSCRIBE_DEV_REPO:-}" ]]; then
+  repo="${TRANSCRIBE_DEV_REPO}"
+else
+  # Resolve through symlinks so ~/.local/bin/transcribe-dev finds its own checkout.
+  target="${BASH_SOURCE[0]}"
+  while [[ -L "${target}" ]]; do
+    link="$(readlink "${target}")"
+    [[ "${link}" == /* ]] && target="${link}" || target="$(dirname "${target}")/${link}"
+  done
+  repo="$(cd "$(dirname "${target}")/.." && pwd)"
+fi
+
+if [[ ! -f "${repo}/pyproject.toml" ]]; then
+  echo "transcribe-dev: no checkout at ${repo}" >&2
+  echo "Set TRANSCRIBE_DEV_REPO to a transcribe checkout or worktree." >&2
+  exit 1
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "transcribe-dev: uv is required (brew install uv)" >&2
+  exit 1
+fi
+
+# --project keeps the checkout's own virtualenv and extras, whatever the cwd is.
+exec uv run --quiet --project "${repo}" python -m transcribe "$@"

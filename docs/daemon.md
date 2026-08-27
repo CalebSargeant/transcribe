@@ -23,8 +23,25 @@ launchctl list | grep transcribe
 runs `transcribe watch <watch_directory>` with `RunAtLoad` and `KeepAlive` enabled, and sets
 `PYTHONUNBUFFERED=1` so logs stream live.
 
-Once loaded, any video dropped into the watch directory is transcribed, summarized, moved to
-the destination, and announced in Slack automatically.
+Once loaded, any video dropped into the watch directory is transcribed, split into its
+constituent meetings, attributed to speakers, summarized into notes, filed one folder per
+meeting, and announced in Slack automatically.
+
+The watcher waits for the file to stop growing before it starts. A recorder creates its
+file when the meeting *begins* and keeps writing until it ends, so the creation event can
+arrive hours before the recording is actually complete.
+
+### Calendar permission
+
+Grant calendar access **before** loading the daemon. macOS shows its permission prompt in
+a UI session, which a launchd agent does not have, so the daemon can never trigger it:
+
+```bash
+transcribe calendar-check
+```
+
+Without this, the daemon still works — it just falls back to inferring meeting titles from
+the transcript instead of reading them from your calendar.
 
 ## Logs
 

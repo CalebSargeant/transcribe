@@ -111,8 +111,8 @@ diarization_threads: 8
 # calendar attendee list is available.
 known_participants: []
 # known_participants:
-#   - Caleb Sargeant
-#   - Arno
+#   - Sam Okoro
+#   - Priya Nair
 
 # --- Calendar ---------------------------------------------------------------
 

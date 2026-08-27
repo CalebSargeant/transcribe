@@ -19,7 +19,7 @@ from .media import cut_video, probe_duration, recording_started_at
 from .notes import generate_notes, notes_action_items, resolve_speaker_names
 from .render import render_html, render_markdown, render_transcript, safe_folder_name
 from .segmentation import split_into_meetings
-from .segments import format_timestamp
+from .segments import Meeting, Segment, format_timestamp
 from .slack import send_slack_notification
 from .whisper import transcribe_video, transcribe_video_segments
 
@@ -130,6 +130,123 @@ def _write_meeting_outputs(
             print(f"  Warning: could not cut video clip ({type(e).__name__}: {e})")
 
     return written
+
+
+def segments_from_text(text, duration=None):
+    """Turn a plain transcript into segments spread across the recording.
+
+    An externally supplied transcript (Voice Memos, for instance) carries no
+    per-sentence timing. Splitting on sentences and distributing them evenly
+    keeps the rest of the pipeline working, but the resulting timestamps are
+    interpolated rather than measured, so they locate a passage roughly rather
+    than exactly.
+    """
+    import re
+
+    pieces = [piece.strip() for piece in re.split(r"(?<=[.!?])\s+", text or "") if piece.strip()]
+    if not pieces:
+        return []
+
+    total = float(duration) if duration else 0.0
+    if total <= 0:
+        # Rough speaking pace, only used to give the segments an ordering.
+        total = max(len(text.split()) / 150.0 * 60.0, len(pieces))
+
+    span = total / len(pieces)
+    return [
+        Segment(start=index * span, end=(index + 1) * span, text=piece)
+        for index, piece in enumerate(pieces)
+    ]
+
+
+def process_transcript(
+    audio_file, transcript, config=None, title=None, recorded_at=None, duration=None
+):
+    """Run the notes pipeline over an already-transcribed recording.
+
+    Used for sources that transcribe themselves, such as Voice Memos. Whisper is
+    skipped; everything downstream (meeting notes, rendering, filing, Slack) is
+    the same code path as a video.
+    """
+    config = config or load_config()
+    audio_file = os.path.abspath(audio_file) if audio_file else None
+
+    print(f"\n{'=' * 60}")
+    name = Path(audio_file).name if audio_file else (title or "recording")
+    print(f"Processing: {name}")
+    print(f"{'=' * 60}\n")
+
+    if not (transcript or "").strip():
+        print("No transcript supplied; nothing to do.")
+        return []
+
+    if duration is None and audio_file:
+        duration = probe_duration(audio_file) or None
+    if recorded_at is None and audio_file:
+        recorded_at = recording_started_at(audio_file)
+
+    segments = segments_from_text(transcript, duration)
+    print(f"✓ Using supplied transcript ({len(transcript.split()):,} words)")
+
+    meeting = Meeting(index=1, start=0.0, end=segments[-1].end, segments=segments, title=title)
+
+    if not is_configured(config):
+        notes = None
+        print("  Notes skipped (no LLM provider configured)")
+    else:
+        # Timestamps here are interpolated, so the model is told not to cite them.
+        notes = generate_notes(
+            meeting,
+            config,
+            extra_context=(
+                "This transcript came from an external transcription service and has no "
+                "reliable per-sentence timing. Do not cite timestamps."
+            ),
+        )
+        if notes:
+            meeting.title = notes.get("title") or meeting.title
+            meeting.notes = notes
+            print(f"  ✓ Notes: {meeting.title}")
+        else:
+            print("  ✗ Notes generation FAILED (see the warning above)")
+
+    base_dest = Path(config.get("destination_directory") or Path(audio_file or ".").parent)
+    folder = _unique_folder(base_dest, _folder_name_for(meeting, recorded_at, notes))
+    written = _write_meeting_outputs(
+        meeting, notes, folder, audio_file or name, recorded_at, config, split_video=False
+    )
+
+    if audio_file and config.get("move_source_video", True):
+        try:
+            shutil.copy2(audio_file, Path(written["folder"]) / Path(audio_file).name)
+            written["audio"] = str(Path(written["folder"]) / Path(audio_file).name)
+            print(f"  ✓ Copied audio into {folder.name}")
+        except Exception as e:
+            print(f"  Warning: could not copy audio ({type(e).__name__}: {e})")
+
+    action_items = notes_action_items(notes)
+    if config.get("slack_webhook_url") or config.get("slack_bot_token"):
+        send_slack_notification(
+            name,
+            written["folder"],
+            meeting.title,
+            (notes or {}).get("summary"),
+            action_items,
+            config,
+        )
+
+    print(f"\n{'=' * 60}")
+    print(f"✓ Saved to {folder}")
+    print(f"{'=' * 60}\n")
+    return [
+        {
+            "title": meeting.title,
+            "folder": written["folder"],
+            "files": written,
+            "action_items": action_items,
+            "notes": notes,
+        }
+    ]
 
 
 def process_recording(video_file, config=None, write_json=False):

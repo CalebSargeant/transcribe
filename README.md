@@ -41,34 +41,35 @@ Meetings/
     └── ...
 ```
 
-`notes.md` follows the structure you'd expect from a hosted meeting assistant:
+`notes.md` follows the structure you'd expect from a hosted meeting assistant. This example
+is invented:
 
 ```markdown
 # Checkout latency and Q3 rollout
-  
-  **Date:** Tuesday, 14 April 2026, 10:00
-  **Duration:** 45 minutes
-  **Invited:** Sam Okoro, Priya Nair, Alex Whitfield
-  
-  ## Summary
-  The team traced checkout latency to an unindexed query and agreed a rollout order for Q3.
-  
-  ### Latency investigation
-  Median checkout time had roughly doubled since the March release. The cause was a missing
-  index on the orders table, added behind a migration.
-  
-  ## Decisions
-  ### Aligned
-  - **Ship the index this week** - The migration goes out ahead of the Q3 work.
-  ### Needs further discussion
-  - **Whether to split the service** - Raised, but nobody committed to a direction.
-  
-  ## Next steps
-  - **[Priya Nair] Add the orders index** - Ship the migration and confirm the median drops.
-  
-  ## Details
-  - **Reproducing the slowdown:** Sam walked through the traces. (00:06:27)
-  ```
+
+**Date:** Tuesday, 14 April 2026, 10:00
+**Duration:** 45 minutes
+**Invited:** Sam Okoro, Priya Nair, Alex Whitfield
+
+## Summary
+The team traced checkout latency to an unindexed query and agreed a rollout order for Q3.
+
+### Latency investigation
+Median checkout time had roughly doubled since the March release. The cause was a missing
+index on the orders table, added behind a migration.
+
+## Decisions
+### Aligned
+- **Ship the index this week** — The migration goes out ahead of the Q3 work.
+### Needs further discussion
+- **Whether to split the service** — Raised, but nobody committed to a direction.
+
+## Next steps
+- **[Priya Nair] Add the orders index** — Ship the migration and confirm the median drops.
+
+## Details
+- **Reproducing the slowdown:** Sam walked through the traces. (00:06:27)
+```
 
 ## Quickstart
 

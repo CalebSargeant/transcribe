@@ -7,6 +7,7 @@ Usage:
   transcribe setup-daemon           - Install background daemon
   transcribe autorecord             - Record meetings automatically via OBS
   transcribe setup-autorecord       - Install the auto-record agent
+  transcribe voicememos [--import]  - List/import macOS Voice Memos
   transcribe menubar                - Menu bar app with a manual override
   transcribe config                 - Configure settings
   transcribe doctor                 - Check dependencies and models
@@ -253,6 +254,78 @@ def _report_devices():
     return 0
 
 
+def _voice_memos(args, selected):
+    """List or import recordings from the macOS Voice Memos app."""
+    from datetime import datetime, timedelta
+
+    from .voicememos import VoiceMemosUnavailable, describe_library, list_memos
+
+    config = load_config()
+
+    if "--debug" in args:
+        try:
+            found = describe_library()
+        except VoiceMemosUnavailable as e:
+            print(f"✗ {e}")
+            return 1
+        print(f"\ndatabase: {found['database']}")
+        print(f"recording table: {found['recording_table']} ({found['recording_count']} rows)")
+        print("resolved columns:")
+        for key, value in found["resolved"].items():
+            print(f"  {key:<11} {value or '(not found)'}")
+        transcript_columns = found["transcript_columns_anywhere"] or "none"
+        print(f"\ntranscript-ish columns anywhere: {transcript_columns}")
+        print(f"\nall columns: {', '.join(found['columns'])}")
+        print(f"\ntables: {', '.join(found['tables'])}\n")
+        return 0
+
+    since = None
+    for arg in args:
+        if arg.startswith("--since-days="):
+            since = datetime.now() - timedelta(days=float(arg.split("=", 1)[1]))
+    if since is None and "--all" not in args:
+        since = datetime.now() - timedelta(days=1)
+
+    try:
+        memos = list_memos(since=since)
+    except VoiceMemosUnavailable as e:
+        print(f"✗ {e}")
+        return 1
+
+    if not memos:
+        print("No Voice Memos found in that window. Try --all, or --debug to see the schema.")
+        return 0
+
+    if "--import" not in args:
+        print(f"\n{len(memos)} memo(s):\n")
+        for index, memo in enumerate(memos, 1):
+            when = memo["recorded_at"].strftime("%Y-%m-%d %H:%M") if memo["recorded_at"] else "?"
+            mins = f"{float(memo['duration']) / 60:.0f} min" if memo["duration"] else "?"
+            words = len(memo["transcript"].split()) if memo["transcript"] else 0
+            state = f"{words:,} words" if words else "NO TRANSCRIPT"
+            print(f"  {index}. {when}  {mins:>7}  {state:>14}  {memo['title']}")
+        print("\nAdd --import to run these through the notes pipeline.\n")
+        return 0
+
+    from .processing import process_transcript
+
+    failures = 0
+    for memo in memos:
+        if not memo["transcript"]:
+            print(f"Skipping {memo['title']!r}: Voice Memos has not transcribed it yet")
+            failures += 1
+            continue
+        process_transcript(
+            memo["audio_path"],
+            memo["transcript"],
+            config,
+            title=memo["title"],
+            recorded_at=memo["recorded_at"],
+            duration=memo["duration"],
+        )
+    return 1 if failures and failures == len(memos) else 0
+
+
 def _print_usage():
     print("Usage:")
     print("  transcribe <video_file> [--json] [--flat] [--no-split]")
@@ -261,6 +334,7 @@ def _print_usage():
     print("  transcribe setup-daemon           - Install background daemon")
     print("  transcribe autorecord             - Record meetings automatically via OBS")
     print("  transcribe setup-autorecord       - Install the auto-record agent")
+    print("  transcribe voicememos [--import]  - List/import macOS Voice Memos")
     print("  transcribe menubar                - Menu bar app with a manual override")
     print("  transcribe mic                    - Show inputs and whether a meeting is detected")
     print("  transcribe config                 - Show/edit configuration")
@@ -324,6 +398,8 @@ def main():
         autorecord_watch(load_config())
     elif command == "mic":
         sys.exit(_report_devices())
+    elif command == "voicememos":
+        sys.exit(_voice_memos(args[1:], selected))
     elif command == "menubar":
         from .menubar import MenuBarUnavailable
         from .menubar import run as run_menubar

@@ -308,6 +308,46 @@ def list_memos(since=None, limit=None):
     return memos
 
 
+def inspect_storage(limit=40):
+    """Describe what actually sits in the Recordings directory.
+
+    The transcript is not in CloudRecordings.db on any macOS version tested, so
+    it has to live beside the audio. This reports the file types present and the
+    most recent entries, which is what identifies the sidecar.
+    """
+    import collections
+
+    if not RECORDINGS_DIR.exists():
+        return {"directory": str(RECORDINGS_DIR), "error": "not found"}
+
+    try:
+        entries = sorted(RECORDINGS_DIR.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError as e:
+        return {"directory": str(RECORDINGS_DIR), "error": str(e)}
+
+    extensions = collections.Counter(
+        (entry.suffix.lower() or "(no extension)") for entry in entries if entry.is_file()
+    )
+    recent = []
+    for entry in entries[:limit]:
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            size = -1
+        recent.append(
+            {
+                "name": str(entry.relative_to(RECORDINGS_DIR)),
+                "kind": "dir" if entry.is_dir() else "file",
+                "size": size,
+            }
+        )
+    return {
+        "directory": str(RECORDINGS_DIR),
+        "extensions": dict(extensions.most_common()),
+        "recent": recent,
+    }
+
+
 def describe_library():
     """Return a description of the schema actually found, for troubleshooting."""
     with _connect() as connection:

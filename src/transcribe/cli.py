@@ -258,7 +258,12 @@ def _voice_memos(args, selected):
     """List or import recordings from the macOS Voice Memos app."""
     from datetime import datetime, timedelta
 
-    from .voicememos import VoiceMemosUnavailable, describe_library, list_memos
+    from .voicememos import (
+        VoiceMemosUnavailable,
+        describe_library,
+        inspect_storage,
+        list_memos,
+    )
 
     config = load_config()
 
@@ -276,7 +281,19 @@ def _voice_memos(args, selected):
         transcript_columns = found["transcript_columns_anywhere"] or "none"
         print(f"\ntranscript-ish columns anywhere: {transcript_columns}")
         print(f"\nall columns: {', '.join(found['columns'])}")
-        print(f"\ntables: {', '.join(found['tables'])}\n")
+        print(f"\ntables: {', '.join(found['tables'])}")
+
+        storage = inspect_storage()
+        print(f"\nrecordings directory: {storage['directory']}")
+        if storage.get("error"):
+            print(f"  error: {storage['error']}")
+        else:
+            print(f"  file types: {storage['extensions']}")
+            print("  most recent entries:")
+            for entry in storage["recent"][:25]:
+                size = f"{entry['size']:,}" if entry["size"] >= 0 else "?"
+                print(f"    {entry['kind']:<4} {size:>12}  {entry['name']}")
+        print()
         return 0
 
     since = None

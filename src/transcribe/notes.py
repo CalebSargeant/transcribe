@@ -457,7 +457,7 @@ def apply_corrections(meeting, notes, glossary_path=None, when=None):
         text = original
         for heard, correct in corrections:
             # Word-boundary, case-insensitive: a mis-hearing rarely matches case.
-            text = re.sub(rf"\b{re.escape(heard)}\b", lambda _m: correct, text, flags=re.IGNORECASE)
+            text = re.sub(rf"\b{re.escape(heard)}\b", lambda _m, c=correct: c, text, flags=re.IGNORECASE)
         if text != original:
             segment.text = text
             changed += 1

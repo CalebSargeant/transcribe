@@ -113,6 +113,11 @@ def extract_audio(video_path, audio_path):
             "error",
             "-i",
             video_path,
+            # Pin the first audio stream. Voice Memos' .qta carries both a
+            # normal AAC mix and an Apple Positional Audio (spatial) stream, and
+            # letting ffmpeg choose "best" can select the spatial one.
+            "-map",
+            "0:a:0",
             "-ar",
             "16000",
             "-ac",
@@ -126,6 +131,31 @@ def extract_audio(video_path, audio_path):
         capture_output=True,
     )
     return audio_path
+
+
+def has_video_stream(path):
+    """True when the file carries a video stream."""
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_bin(),
+                "-v",
+                "error",
+                "-select_streams",
+                "v",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "csv=p=0",
+                os.path.abspath(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return bool(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 
 def cut_video(video_path, dest_path, start, end):
@@ -143,6 +173,10 @@ def cut_video(video_path, dest_path, start, end):
     # the resulting slice length ambiguous across ffmpeg versions.
     if end is not None:
         cmd += ["-t", f"{max(end - start, 0):.3f}"]
-    cmd += ["-i", video_path, "-c", "copy", "-map", "0", dest_path, "-y"]
+    # Map video (if any) and the first audio stream, rather than everything.
+    # "-map 0" also grabs tracks that cannot be stream-copied: Voice Memos' .qta
+    # carries an Apple Positional Audio stream and an mebx timed-metadata track,
+    # and ffmpeg fails outright rather than skipping them.
+    cmd += ["-i", video_path, "-c", "copy", "-map", "0:v?", "-map", "0:a:0", dest_path, "-y"]
     subprocess.run(cmd, check=True, capture_output=True)
     return dest_path

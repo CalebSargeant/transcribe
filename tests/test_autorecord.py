@@ -6,6 +6,7 @@ from transcribe.audio import DEFAULT_IGNORED_DEVICES, is_ignored
 from transcribe.autorecord import MeetingRecorder, Presence, meeting_in_progress
 from transcribe.camera import DEFAULT_IGNORED_CAMERAS
 from transcribe.camera import is_ignored as camera_ignored
+from transcribe.segments import Meeting, Segment
 
 
 @pytest.fixture
@@ -264,3 +265,83 @@ def test_real_cameras_are_not_ignored(name):
 def test_iphone_desk_view_is_ignored():
     """Continuity Desk View is a second stream of the same camera, not a call."""
     assert camera_ignored("Caleb's iPhone Desk View Camera", DEFAULT_IGNORED_CAMERAS) is True
+
+
+# --- attendees are a roster, not a headcount ---------------------------------
+
+
+def test_attendee_count_pins_the_clustering(monkeypatch, tmp_path):
+    """Unconstrained clustering splits a long meeting into far too many voices.
+
+    Measured on a 53-minute meeting with 11 invited: threshold-based clustering
+    produced 17 speakers, and 0.95 still produced 15. Pinning to the attendee
+    count produced 8, with silent invitees dropping out as micro-clusters.
+    """
+    from transcribe import processing
+
+    captured = {}
+
+    def fake_diarize(meeting, audio, config, num_speakers=None):
+        captured["num_speakers"] = num_speakers
+        return False
+
+    monkeypatch.setattr(processing, "diarize_meeting", fake_diarize)
+    monkeypatch.setattr(processing, "transcribe_video_segments", lambda *a, **k: ([], "/tmp/a.wav"))
+    monkeypatch.setattr(processing, "events_for_recording", lambda *a, **k: [])
+    monkeypatch.setattr(processing, "build_prompt", lambda *a, **k: "")
+    monkeypatch.setattr(processing, "probe_duration", lambda p: 60.0)
+    monkeypatch.setattr(processing, "recording_started_at", lambda p: None)
+
+    meeting = Meeting(
+        index=1,
+        start=0,
+        end=60,
+        segments=[Segment(start=0, end=60, text="hello")],
+        attendees=[f"Person {i}" for i in range(11)],
+    )
+    monkeypatch.setattr(processing, "split_into_meetings", lambda *a, **k: [meeting])
+
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    processing.process_recording(
+        str(video),
+        {
+            "destination_directory": str(tmp_path / "out"),
+            "diarization_enabled": True,
+            "anthropic_api_key": "",
+            "move_source_video": False,
+        },
+    )
+    assert captured["num_speakers"] == 11
+
+
+def test_no_roster_leaves_the_count_to_the_threshold(monkeypatch, tmp_path):
+    """With nobody known, there is no count to pin to."""
+    from transcribe import processing
+
+    captured = {}
+    monkeypatch.setattr(
+        processing,
+        "diarize_meeting",
+        lambda m, a, c, num_speakers=None: captured.update(num_speakers=num_speakers) or False,
+    )
+    monkeypatch.setattr(processing, "transcribe_video_segments", lambda *a, **k: ([], "/tmp/a.wav"))
+    monkeypatch.setattr(processing, "events_for_recording", lambda *a, **k: [])
+    monkeypatch.setattr(processing, "build_prompt", lambda *a, **k: "")
+    monkeypatch.setattr(processing, "probe_duration", lambda p: 60.0)
+    monkeypatch.setattr(processing, "recording_started_at", lambda p: None)
+    meeting = Meeting(index=1, start=0, end=60, segments=[Segment(start=0, end=60, text="hi")])
+    monkeypatch.setattr(processing, "split_into_meetings", lambda *a, **k: [meeting])
+
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    processing.process_recording(
+        str(video),
+        {
+            "destination_directory": str(tmp_path / "out"),
+            "diarization_enabled": True,
+            "anthropic_api_key": "",
+            "move_source_video": False,
+        },
+    )
+    assert captured["num_speakers"] is None

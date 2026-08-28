@@ -46,7 +46,12 @@ DEFAULT_CONFIG = {
     "whisper_threads": 8,
     # Optional initial prompt biasing the decoder toward your vocabulary, e.g.
     # "Terraform, Kubernetes, MikroTik, BGP, IPsec". Improves proper nouns.
+    # Seed vocabulary. This is no longer a list to maintain by hand: the prompt
+    # is assembled per recording from the calendar event, a glossary mined from
+    # your own past notes, and this seed, then fitted to whisper's 224-token cap.
     "whisper_prompt": "",
+    "whisper_auto_prompt": True,
+    "whisper_prompt_token_budget": 190,
     # --- Meetings ----------------------------------------------------------
     # Split a recording into the separate meetings it contains, and write one
     # folder of notes per meeting. Set false for the original flat behaviour.

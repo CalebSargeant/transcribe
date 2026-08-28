@@ -169,6 +169,87 @@ def test_resolve_speaker_names_passes_known_participants(monkeypatch, meeting, c
     assert "Caleb Sargeant" in captured["user"]
 
 
+def test_resolve_speaker_names_gives_the_roster_to_the_context(monkeypatch, config):
+    """The roster selects the evidence, not just the candidate names.
+
+    Passing it only into the prompt text left the context builder with nothing
+    to match on, so a long meeting sent nothing but its first two minutes and
+    the model had no grounds to name anyone.
+    """
+    captured = {}
+    monkeypatch.setattr(
+        notes_mod,
+        "complete_json",
+        lambda cfg, system, user, schema, **kw: captured.update(user=user) or {"speakers": []},
+    )
+    segments = [Segment(start=0, end=200, text="lets get going", speaker="Speaker 1")]
+    segments += [
+        Segment(start=t, end=t + 100, text=f"filler {t}", speaker="Speaker 2")
+        for t in range(200, 3000, 100)
+    ]
+    segments.append(Segment(start=3000, end=3100, text="over to you Arno", speaker="Speaker 1"))
+    meeting = Meeting(index=1, start=0, end=3100, segments=segments)
+
+    resolve_speaker_names(meeting, config, ["Arno Bakker", "Caleb Sargeant"])
+    assert "over to you Arno" in captured["user"]
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (None, "failed"),
+        ({"speakers": []}, "no confident match"),
+        (
+            {"speakers": [{"label": "Speaker 1", "name": "Bob", "confidence": "low"}]},
+            "no confident",
+        ),
+    ],
+)
+def test_resolve_speaker_names_says_why_it_named_nobody(
+    monkeypatch, meeting, config, response, expected
+):
+    """An empty result and a broken call look identical in the log otherwise."""
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: response)
+    named = resolve_speaker_names(meeting, config)
+    assert named == {}
+    assert expected in named.reason
+
+
+def test_resolve_speaker_names_reports_a_partial_result(monkeypatch, config):
+    """Naming half the room is the common case and should read as progress."""
+    meeting = Meeting(
+        index=1,
+        start=0,
+        end=400,
+        segments=[
+            Segment(start=0, end=200, text="morning all", speaker="Speaker 1"),
+            Segment(start=200, end=400, text="hello", speaker="Speaker 2"),
+        ],
+    )
+    monkeypatch.setattr(
+        notes_mod,
+        "complete_json",
+        lambda *a, **k: {
+            "speakers": [
+                {"label": "Speaker 1", "name": "Arno", "confidence": "high"},
+                {"label": "Speaker 2", "name": "", "confidence": "low"},
+            ]
+        },
+    )
+    assert "1 of 2" in resolve_speaker_names(meeting, config).reason
+
+
+def test_resolve_speaker_names_reason_when_no_provider(meeting):
+    named = resolve_speaker_names(meeting, {"anthropic_api_key": ""})
+    assert "no LLM provider" in named.reason
+
+
+def test_resolve_speaker_names_reason_when_every_voice_is_a_fragment(config):
+    segments = [Segment(start=0, end=5, text="mm", speaker="Speaker 1")]
+    meeting = Meeting(index=1, start=0, end=5, segments=segments)
+    assert "spoke for" in resolve_speaker_names(meeting, config).reason
+
+
 def test_resolve_speaker_names_without_diarization(config):
     """No speaker labels means nothing to resolve."""
     bare = Meeting(index=1, start=0, end=10, segments=[Segment(start=0, end=10, text="hi")])

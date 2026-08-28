@@ -215,6 +215,26 @@ Silero VAD skips non-speech and resets decoder state per speech chunk, which con
 damage. On a real 3.5-hour recording, enabling it took the transcript from 2,852 words to
 20,762. Leave `whisper_vad` on.
 
+### Domain vocabulary, without a list to maintain
+
+Whisper takes an initial prompt that biases the decoder toward specific words, which is
+what stops "Kubernetes" becoming "humanitis". But it is **capped at 224 tokens**, so a
+global jargon list cannot grow: every term added crowds out another. The prompt is
+therefore assembled per recording, from three sources in priority order:
+
+1. **The calendar event** — its title and attendee names. A call titled "Janeway hosting
+   review" primes "Janeway" with nobody typing anything.
+2. **A glossary mined from your own past notes** in the destination folder. Terms that
+   recur across meetings are your domain vocabulary, by definition.
+3. **The `whisper_prompt` seed**, for terms that never appear in text on their own.
+
+The loop that closes it: when the notes step infers that a garbled word was really
+"Kubernetes", it reports that correction. The transcript is repaired, and the term is
+added to the glossary, so next time the decoder is primed with it rather than mishearing
+it again. Nobody edits a config file.
+
+Set `whisper_auto_prompt: false` to go back to using `whisper_prompt` verbatim.
+
 The default model is `large-v3-turbo` (~1.6 GB, downloaded once). Set `whisper_model: base`
 if you'd rather have something small and fast.
 

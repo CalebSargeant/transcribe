@@ -211,3 +211,41 @@ def test_timeline_outline_marks_silence_gaps(two_meetings):
 
 def test_timeline_outline_on_empty_segments():
     assert timeline_outline([], []) == ""
+
+
+# --- trailing fragments ------------------------------------------------------
+
+
+def test_closing_chatter_is_folded_into_the_meeting_it_ends():
+    """Goodbyes and lunch plans are not a meeting of their own."""
+    segments = make_segments(
+        [(0, 600, "we agreed the branching strategy needs a gap analysis")]
+        + [(600 + i * 5, 605 + i * 5, "going to lunch") for i in range(30)]
+    )
+    config = {"anthropic_api_key": "", "min_meeting_seconds": 60, "meeting_gap_seconds": 1}
+    meetings = split_into_meetings(segments, config=config)
+    assert len(meetings) == 1
+    assert meetings[0].end == segments[-1].end
+
+
+def test_a_trailing_meeting_with_real_content_is_kept():
+    segments = make_segments(
+        [
+            (0, 600, "first meeting about the routing work"),
+            (900, 1000, "different subject entirely, the budget for next quarter"),
+            (1000, 1200, "and the hiring plan we discussed with finance"),
+        ]
+    )
+    config = {"anthropic_api_key": "", "min_meeting_seconds": 60, "meeting_gap_seconds": 120}
+    assert len(split_into_meetings(segments, config=config)) == 2
+
+
+def test_meeting_indexes_stay_sequential_after_a_merge():
+    segments = make_segments(
+        [(0, 600, "real content")] + [(600 + i * 5, 605 + i * 5, "bye") for i in range(30)]
+    )
+    meetings = split_into_meetings(
+        segments,
+        config={"anthropic_api_key": "", "min_meeting_seconds": 60, "meeting_gap_seconds": 1},
+    )
+    assert [m.index for m in meetings] == list(range(1, len(meetings) + 1))

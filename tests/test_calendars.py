@@ -94,3 +94,55 @@ def test_event_offsets_can_be_negative_for_meetings_already_running():
     event = {"start": "2026-08-25T09:30:00", "end": "2026-08-25T10:00:00"}
     start, _ = event_offsets(event, datetime(2026, 8, 25, 9, 34, 0))
     assert start == pytest.approx(-240)
+
+
+# --- permission guidance -----------------------------------------------------
+
+
+def test_permission_error_names_the_app_to_grant(monkeypatch):
+    """The app to add is the terminal, not this tool, which is rarely obvious."""
+    from transcribe import permissions
+
+    monkeypatch.setattr(permissions, "responsible_app", lambda: "Warp")
+    hint = permissions.grant_hint("Calendars")
+    assert "Warp" in hint
+    assert "Privacy & Security > Calendars" in hint
+    assert "Cmd-Q" in hint
+
+
+def test_grant_hint_falls_back_without_an_app_bundle(monkeypatch):
+    from transcribe import permissions
+
+    monkeypatch.setattr(permissions, "responsible_app", lambda: None)
+    assert "the terminal app you are running this from" in permissions.grant_hint("Calendars")
+
+
+def test_full_disk_access_hint_says_to_add_it_manually(monkeypatch):
+    """Full Disk Access never lists an app until you add it with '+'."""
+    from transcribe import permissions
+
+    monkeypatch.setattr(permissions, "responsible_app", lambda: "Warp")
+    hint = permissions.grant_hint("Full Disk Access", needs_manual_add=True)
+    assert "'+' button" in hint
+    assert "never fills itself in" in hint
+
+
+def test_responsible_app_walks_up_to_a_bundle(monkeypatch):
+    """A CLI's own process is not in a bundle; its terminal is."""
+    import subprocess as sp
+
+    from transcribe import permissions
+
+    tree = {
+        str(permissions.os.getpid()): ("200", "/usr/bin/python3"),
+        "200": ("300", "/bin/zsh"),
+        "300": ("1", "/Applications/Warp.app/Contents/MacOS/stable"),
+    }
+
+    def fake_run(cmd, **kwargs):
+        pid = cmd[-1]
+        parent, command = tree.get(pid, ("1", "launchd"))
+        return sp.CompletedProcess(cmd, 0, stdout=f"{parent} {command}\n", stderr="")
+
+    monkeypatch.setattr(permissions.subprocess, "run", fake_run)
+    assert permissions.responsible_app() == "Warp"

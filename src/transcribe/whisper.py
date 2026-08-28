@@ -13,10 +13,12 @@ non-speech and resets decoder state per speech chunk, which contains the damage.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from difflib import SequenceMatcher
 
 from .media import extract_audio
 from .segments import Segment
@@ -188,6 +190,66 @@ def _parse_whisper_json(json_path):
     return segments
 
 
+# A long sentence repeated back to back is a decoder loop, not speech. Short
+# utterances ("Yes.", "Yeah.") genuinely do repeat, so they get more leeway.
+LOOP_LONG_TEXT_CHARS = 25
+LOOP_KEEP_LONG = 1
+LOOP_KEEP_SHORT = 2
+# A loop drifts as it repeats ("We're going to..." becomes "It's going to..."),
+# so exact matching misses the tail of one. Long lines are compared by
+# similarity instead; short ones are not, because "Yes." and "Yeah." are
+# genuinely different words.
+LOOP_SIMILARITY = 0.85
+
+
+def _normalise(text):
+    """Lowercase, strip punctuation and spacing, for comparing repeats."""
+    return re.sub(r"[^a-z0-9 ]", "", (text or "").lower()).strip()
+
+
+def _same_run(current, previous):
+    """True when two consecutive lines are the same utterance repeating."""
+    if not previous or not current:
+        return False
+    if current == previous:
+        return True
+    if min(len(current), len(previous)) <= LOOP_LONG_TEXT_CHARS:
+        return False
+    return SequenceMatcher(None, current, previous).ratio() >= LOOP_SIMILARITY
+
+
+def collapse_repetitions(segments):
+    """Collapse runs of identical consecutive segments.
+
+    Whisper falls into repetition loops on ambiguous audio, emitting the same
+    sentence for minutes. VAD contains the worst of it by resetting decoder
+    state per speech chunk, but a loop inside one chunk still gets through, and
+    the notes step will then faithfully summarise a hallucination.
+
+    Returns ``(segments, dropped)``.
+    """
+    kept = []
+    dropped = 0
+    run_text = None
+    run_length = 0
+
+    for segment in segments:
+        normalised = _normalise(segment.text)
+        if normalised and _same_run(normalised, run_text):
+            run_length += 1
+        else:
+            run_text = normalised
+            run_length = 1
+
+        allowed = LOOP_KEEP_LONG if len(normalised) > LOOP_LONG_TEXT_CHARS else LOOP_KEEP_SHORT
+        if run_length <= allowed:
+            kept.append(segment)
+        else:
+            dropped += 1
+
+    return kept, dropped
+
+
 def transcribe_audio_segments(audio_path, config=None):
     """Transcribe a 16 kHz mono WAV, returning a list of timestamped ``Segment``."""
     config = config or {}
@@ -240,7 +302,12 @@ def transcribe_audio_segments(audio_path, config=None):
                 "whisper-cli not found. Install with: brew install whisper-cpp"
             ) from e
 
-        return _parse_whisper_json(out_stem + ".json")
+        segments = _parse_whisper_json(out_stem + ".json")
+        if config.get("whisper_collapse_repetitions", True):
+            segments, dropped = collapse_repetitions(segments)
+            if dropped:
+                print(f"  Dropped {dropped} repeated segment(s) from decoder loops")
+        return segments
 
 
 def transcribe_video_segments(video_path, config=None):

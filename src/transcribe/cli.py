@@ -324,23 +324,42 @@ def _voice_memos(args, selected):
         print("\nAdd --import to run these through the notes pipeline.\n")
         return 0
 
-    from .processing import process_transcript
+    from .processing import process_transcript, process_video_file
 
-    failures = 0
+    # Transcribing locally beats reusing the app's transcript. Measured on a
+    # 53-minute meeting: 7,713 words against roughly 5,000, and every technical
+    # term the app garbled came out right -- "trunk based" for "Trump-based",
+    # "cherry pick from master" for "charity pick from after", Kubernetes for
+    # "humanitis". The local path also produces timestamps and speaker
+    # attribution, neither of which the app's transcript carries.
+    prefer_app = "--use-app-transcript" in args
+
     for memo in memos:
-        if not memo["transcript"]:
-            print(f"Skipping {memo['title']!r}: Voice Memos has not transcribed it yet")
-            failures += 1
-            continue
-        process_transcript(
-            memo["audio_path"],
-            memo["transcript"],
-            config,
-            title=memo["title"],
-            recorded_at=memo["recorded_at"],
-            duration=memo["duration"],
-        )
-    return 1 if failures and failures == len(memos) else 0
+        if prefer_app and memo["transcript"]:
+            process_transcript(
+                memo["audio_path"],
+                memo["transcript"],
+                config,
+                title=memo["title"],
+                recorded_at=memo["recorded_at"],
+                duration=memo["duration"],
+            )
+        elif memo["audio_path"]:
+            process_video_file(memo["audio_path"], config)
+        elif memo["transcript"]:
+            # No readable audio, so the app's transcript beats nothing.
+            print(f"{memo['title']!r}: audio unreadable, using the Voice Memos transcript")
+            process_transcript(
+                None,
+                memo["transcript"],
+                config,
+                title=memo["title"],
+                recorded_at=memo["recorded_at"],
+                duration=memo["duration"],
+            )
+        else:
+            print(f"Skipping {memo['title']!r}: no readable audio and no transcript")
+    return 0
 
 
 def _print_usage():
@@ -354,6 +373,8 @@ def _print_usage():
     print("  transcribe voicememos [--import]  - List/import macOS Voice Memos")
     print("       --debug        show the library schema")
     print("       --all          every memo, not just the last day")
+    print("       --use-app-transcript  reuse the app's transcript instead of")
+    print("                             transcribing locally (faster, worse)")
     print("  transcribe menubar                - Menu bar app with a manual override")
     print("  transcribe mic                    - Show inputs and whether a meeting is detected")
     print("  transcribe config                 - Show/edit configuration")

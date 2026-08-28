@@ -15,12 +15,18 @@ from .llm import (
     is_configured,
     summarize_with_openai,
 )
-from .media import cut_video, probe_duration, recording_started_at
-from .notes import generate_notes, notes_action_items, resolve_speaker_names
+from .media import cut_video, has_video_stream, probe_duration, recording_started_at
+from .notes import (
+    apply_corrections,
+    generate_notes,
+    notes_action_items,
+    resolve_speaker_names,
+)
 from .render import render_html, render_markdown, render_transcript, safe_folder_name
 from .segmentation import split_into_meetings
 from .segments import Meeting, Segment, format_timestamp
 from .slack import send_slack_notification
+from .vocabulary import build_prompt
 from .whisper import transcribe_video, transcribe_video_segments
 
 
@@ -121,7 +127,10 @@ def _write_meeting_outputs(
     written["json"] = str(dest_dir / "notes.json")
 
     if split_video:
-        clip = dest_dir / f"{safe_folder_name(dest_dir.name)}{Path(video_file).suffix}"
+        # An audio-only source produces an audio clip; keeping the source's
+        # container (.qta, say) would make a file nothing else opens.
+        suffix = Path(video_file).suffix if has_video_stream(video_file) else ".m4a"
+        clip = dest_dir / f"{safe_folder_name(dest_dir.name)}{suffix}"
         try:
             cut_video(video_file, str(clip), meeting.start, meeting.end)
             written["video"] = str(clip)
@@ -267,19 +276,28 @@ def process_recording(video_file, config=None, write_json=False):
     if recording_start is not None:
         print(f"Recording started {recording_start:%Y-%m-%d %H:%M}, {duration / 60:.0f} minutes")
 
-    segments, audio_path = transcribe_video_segments(video_file, config)
+    # The calendar is read before transcribing rather than after: its title and
+    # attendee names are the most specific vocabulary available for the decoder,
+    # and priming it beats correcting the output afterwards.
+    calendar_events = events_for_recording(recording_start, duration, config)
+    if calendar_events:
+        print(f"✓ Found {len(calendar_events)} calendar event(s) covering this recording")
+        for event in calendar_events:
+            print(f"    {event['start'][11:16]}  {event['title']}")
+
+    prompt = build_prompt(config, calendar_events)
+    if prompt:
+        print(f"✓ Priming the decoder with {len(prompt.split(', '))} terms")
+
+    segments, audio_path = transcribe_video_segments(
+        video_file, {**config, "whisper_prompt": prompt}
+    )
     print(
         f"✓ Transcribed {len(segments)} segments "
         f"({sum(len(s.text.split()) for s in segments):,} words)"
     )
 
     try:
-        calendar_events = events_for_recording(recording_start, duration, config)
-        if calendar_events:
-            print(f"✓ Found {len(calendar_events)} calendar event(s) covering this recording")
-            for event in calendar_events:
-                print(f"    {event['start'][11:16]}  {event['title']}")
-
         print("\n--- Identifying meetings ---")
         meetings = split_into_meetings(
             segments,
@@ -304,12 +322,14 @@ def process_recording(video_file, config=None, write_json=False):
             if config.get("diarization_enabled", True):
                 print("  Identifying speakers...")
                 known = meeting.attendees or config.get("known_participants") or []
-                if diarize_meeting(
-                    meeting,
-                    audio_path,
-                    config,
-                    num_speakers=len(known) if known else None,
-                ):
+                # The attendee count is used as the cluster count. It reads like
+                # an overestimate -- 11 invited where 8 speak -- but measured on
+                # a 53-minute meeting it is the only thing that works: voice
+                # embeddings drift over that length, so unconstrained clustering
+                # split the room into 17 speakers and raising the threshold to
+                # 0.95 only got it to 15. Pinning to 11 gave 8, and the silent
+                # invitees fall out as micro-clusters on their own.
+                if diarize_meeting(meeting, audio_path, config, num_speakers=len(known) or None):
                     print(f"  ✓ Separated {len(meeting.speakers())} voice(s)")
                     named = resolve_speaker_names(meeting, config, known)
                     if named:
@@ -317,6 +337,10 @@ def process_recording(video_file, config=None, write_json=False):
                             "  ✓ Named: "
                             + ", ".join(f"{label} → {name}" for label, name in named.items())
                         )
+                    else:
+                        # Silence here is indistinguishable from success at a
+                        # glance, and the causes need different fixes.
+                        print(f"  · No speakers named ({named.reason})")
 
             # Distinguish "no provider configured" from "the call failed": both
             # yield no notes, but only one of them is the user's doing.
@@ -334,6 +358,15 @@ def process_recording(video_file, config=None, write_json=False):
                         print(f"  ✓ {len(steps)} next step(s)")
                 else:
                     print("  ✗ Notes generation FAILED (see the warning above)")
+
+            if notes:
+                repaired = apply_corrections(meeting, notes, when=recording_start)
+                if repaired:
+                    count = len(notes.get("corrections") or [])
+                    print(
+                        f"  ✓ Applied {count} transcript correction(s) across "
+                        f"{repaired} segment(s), and learned them for next time"
+                    )
 
             folder = _unique_folder(base_dest, _folder_name_for(meeting, recording_start, notes))
             written = _write_meeting_outputs(

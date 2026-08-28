@@ -121,10 +121,12 @@ def fetch_macos_events(window_start, window_end, config=None):
     status, label = authorization_status()
     # 3 = legacy "authorized", 5 = macOS 14+ full access.
     if status not in (3, 5) and not _request_access(store):
+        from .permissions import grant_hint
+
         raise CalendarUnavailable(
-            f"calendar access is {label}. Run 'transcribe calendar-check' from a "
-            "terminal to grant it, or enable it under System Settings > Privacy "
-            "& Security > Calendars."
+            f"calendar access is {label}.\n{grant_hint('Calendars')}\n"
+            "  A permission prompt only appears when there is a UI session to show it, "
+            "so run 'transcribe calendar-check' from your own terminal window."
         )
 
     to_nsdate = NSDate.dateWithTimeIntervalSinceReferenceDate_

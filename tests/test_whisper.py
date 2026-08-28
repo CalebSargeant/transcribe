@@ -315,3 +315,89 @@ def test_transcribe_video_exits_when_tool_missing(monkeypatch, base_config):
     with pytest.raises(SystemExit) as exc:
         transcribe_video("/v.mov", base_config)
     assert exc.value.code == 1
+
+
+# --- repetition loops --------------------------------------------------------
+
+
+def _segs(texts):
+    from transcribe.segments import Segment
+
+    return [Segment(start=i, end=i + 1, text=t) for i, t in enumerate(texts)]
+
+
+def test_long_repeated_sentence_is_collapsed():
+    """Whisper loops on ambiguous audio; the notes step then summarises it."""
+    loop = ["It's going to talk about the Netherlands."] * 10
+    kept, dropped = whisper.collapse_repetitions(_segs(["Real content here.", *loop]))
+    assert dropped == 9
+    assert [s.text for s in kept] == ["Real content here.", loop[0]]
+
+
+def test_short_utterances_may_repeat_twice():
+    """People really do say 'Yes.' twice; that is not a loop."""
+    kept, dropped = whisper.collapse_repetitions(_segs(["Yes.", "Yes."]))
+    assert dropped == 0
+    assert len(kept) == 2
+
+
+def test_short_utterances_repeated_many_times_are_still_collapsed():
+    kept, dropped = whisper.collapse_repetitions(_segs(["Yeah."] * 8))
+    assert len(kept) == 2
+    assert dropped == 6
+
+
+def test_repetition_must_be_consecutive():
+    """The same phrase recurring through a meeting is normal speech."""
+    kept, dropped = whisper.collapse_repetitions(
+        _segs(["Same line here now.", "Something else.", "Same line here now."])
+    )
+    assert dropped == 0
+    assert len(kept) == 3
+
+
+def test_collapse_ignores_punctuation_and_case():
+    kept, _ = whisper.collapse_repetitions(
+        _segs(["Talk about the Netherlands.", "talk about the netherlands"])
+    )
+    assert len(kept) == 1
+
+
+def test_collapse_on_empty_input():
+    assert whisper.collapse_repetitions([]) == ([], 0)
+
+
+def test_a_drifting_loop_is_collapsed():
+    """Loops mutate as they repeat, so exact matching misses the tail of one."""
+    kept, dropped = whisper.collapse_repetitions(
+        _segs(
+            [
+                "We're going to talk about the Netherlands.",
+                "We're going to talk about the Netherlands today.",
+                "I'm going to talk about the Netherlands.",
+                "It's going to talk about the Netherlands.",
+            ]
+        )
+    )
+    assert len(kept) == 1
+    assert dropped == 3
+
+
+def test_similar_short_lines_are_not_treated_as_a_loop():
+    """'Yes.' and 'Yeah.' are close as strings but are different words."""
+    kept, dropped = whisper.collapse_repetitions(_segs(["Yes.", "Yeah.", "Yep."]))
+    assert dropped == 0
+    assert len(kept) == 3
+
+
+def test_distinct_long_sentences_survive():
+    kept, dropped = whisper.collapse_repetitions(
+        _segs(
+            [
+                "The branching strategy needs a gap analysis first.",
+                "The database migration should be rolled back safely.",
+            ]
+        )
+    )
+    assert dropped == 0
+    assert len(kept) == 2

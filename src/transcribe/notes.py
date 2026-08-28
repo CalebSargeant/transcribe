@@ -9,6 +9,8 @@ stay consistent with each other, and every detail line carries a timestamp so a
 claim can be checked against the recording.
 """
 
+import re
+
 from .llm import complete_json, is_configured
 from .segments import format_timestamp
 
@@ -136,6 +138,27 @@ NOTES_SCHEMA = {
                     },
                 },
                 "required": ["owner", "title", "detail"],
+            },
+        },
+        "corrections": {
+            "type": "array",
+            "description": "Proper nouns and technical terms the transcript clearly got "
+            "wrong, which you were able to infer from context. Only include ones you are "
+            "confident about. Empty if the transcript looks clean.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "heard": {
+                        "type": "string",
+                        "description": "The wrong text exactly as it appears in the "
+                        "transcript, e.g. 'humanitis'.",
+                    },
+                    "correct": {
+                        "type": "string",
+                        "description": "What was actually said, e.g. 'Kubernetes'.",
+                    },
+                },
+                "required": ["heard", "correct"],
             },
         },
         "details": {
@@ -341,7 +364,8 @@ def generate_notes(meeting, config, extra_context=None):
         "subnets') over the vague gesture ('some network changes').\n"
         "- The transcript comes from automatic speech recognition, so proper nouns and "
         "technical terms may be misspelled. Infer the intended term where it is "
-        "obvious from context.\n"
+        "obvious from context, and list those in 'corrections' so the transcript can "
+        "be repaired and the term recognised next time.\n"
         "- Leave decisions and next steps empty rather than padding them with "
         "discussion points that nobody committed to."
     )
@@ -377,3 +401,48 @@ def notes_action_items(notes):
         prefix = f"[{owner}] " if owner and owner.lower() != "unassigned" else ""
         items.append(f"{prefix}{title}: {detail}" if detail else f"{prefix}{title}")
     return items
+
+
+def apply_corrections(meeting, notes, glossary_path=None, when=None):
+    """Repair the transcript using the corrections the notes call reported.
+
+    The model reads the whole transcript to write the notes, so it already works
+    out that "humanitis" was Kubernetes. Surfacing that lets two things happen:
+    the stored transcript stops being wrong, and the corrected term is recorded
+    so the decoder is primed with it next time rather than mishearing it again.
+
+    Returns the number of segments changed.
+    """
+    from .vocabulary import record_terms
+
+    corrections = [
+        (entry.get("heard") or "", entry.get("correct") or "")
+        for entry in (notes or {}).get("corrections") or []
+    ]
+    corrections = [
+        (heard.strip(), correct.strip())
+        for heard, correct in corrections
+        if heard.strip() and correct.strip() and heard.strip().lower() != correct.strip().lower()
+    ]
+    if not corrections:
+        return 0
+
+    changed = 0
+    for segment in meeting.segments:
+        original = segment.text
+        text = original
+        for heard, correct in corrections:
+            # Word-boundary, case-insensitive: a mis-hearing rarely matches case.
+            text = re.sub(rf"\b{re.escape(heard)}\b", correct, text, flags=re.IGNORECASE)
+        if text != original:
+            segment.text = text
+            changed += 1
+
+    # Weighted by how often each correction was actually needed, so a term that
+    # recurs through a meeting outranks a one-off.
+    record_terms(
+        {correct: 1 for _, correct in corrections},
+        path=glossary_path,
+        when=(when.isoformat() if hasattr(when, "isoformat") else when),
+    )
+    return changed

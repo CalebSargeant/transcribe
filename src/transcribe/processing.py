@@ -16,11 +16,17 @@ from .llm import (
     summarize_with_openai,
 )
 from .media import cut_video, probe_duration, recording_started_at
-from .notes import generate_notes, notes_action_items, resolve_speaker_names
+from .notes import (
+    apply_corrections,
+    generate_notes,
+    notes_action_items,
+    resolve_speaker_names,
+)
 from .render import render_html, render_markdown, render_transcript, safe_folder_name
 from .segmentation import split_into_meetings
 from .segments import Meeting, Segment, format_timestamp
 from .slack import send_slack_notification
+from .vocabulary import build_prompt
 from .whisper import transcribe_video, transcribe_video_segments
 
 
@@ -267,19 +273,28 @@ def process_recording(video_file, config=None, write_json=False):
     if recording_start is not None:
         print(f"Recording started {recording_start:%Y-%m-%d %H:%M}, {duration / 60:.0f} minutes")
 
-    segments, audio_path = transcribe_video_segments(video_file, config)
+    # The calendar is read before transcribing rather than after: its title and
+    # attendee names are the most specific vocabulary available for the decoder,
+    # and priming it beats correcting the output afterwards.
+    calendar_events = events_for_recording(recording_start, duration, config)
+    if calendar_events:
+        print(f"✓ Found {len(calendar_events)} calendar event(s) covering this recording")
+        for event in calendar_events:
+            print(f"    {event['start'][11:16]}  {event['title']}")
+
+    prompt = build_prompt(config, calendar_events)
+    if prompt:
+        print(f"✓ Priming the decoder with {len(prompt.split(', '))} terms")
+
+    segments, audio_path = transcribe_video_segments(
+        video_file, {**config, "whisper_prompt": prompt}
+    )
     print(
         f"✓ Transcribed {len(segments)} segments "
         f"({sum(len(s.text.split()) for s in segments):,} words)"
     )
 
     try:
-        calendar_events = events_for_recording(recording_start, duration, config)
-        if calendar_events:
-            print(f"✓ Found {len(calendar_events)} calendar event(s) covering this recording")
-            for event in calendar_events:
-                print(f"    {event['start'][11:16]}  {event['title']}")
-
         print("\n--- Identifying meetings ---")
         meetings = split_into_meetings(
             segments,
@@ -334,6 +349,15 @@ def process_recording(video_file, config=None, write_json=False):
                         print(f"  ✓ {len(steps)} next step(s)")
                 else:
                     print("  ✗ Notes generation FAILED (see the warning above)")
+
+            if notes:
+                repaired = apply_corrections(meeting, notes, when=recording_start)
+                if repaired:
+                    count = len(notes.get("corrections") or [])
+                    print(
+                        f"  ✓ Applied {count} transcript correction(s) across "
+                        f"{repaired} segment(s), and learned them for next time"
+                    )
 
             folder = _unique_folder(base_dest, _folder_name_for(meeting, recording_start, notes))
             written = _write_meeting_outputs(

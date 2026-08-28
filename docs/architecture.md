@@ -81,6 +81,19 @@ Measured on a 3h33m recording:
 `whisper.cpp` runs Silero VAD (`--vad`), which both skips non-speech and resets decoder
 state per speech chunk so a loop cannot propagate. `whisper_vad` defaults to `true`.
 
+## Domain vocabulary
+
+Whisper's initial prompt is capped at `n_text_ctx / 2` = 224 tokens, so a domain
+vocabulary cannot accumulate globally: every term added crowds out another. `vocabulary.py`
+selects one per recording instead, from the calendar event (most specific), the configured
+seed, then a glossary ranked from terms recurring in past `notes.json` files, fitted to the
+budget so the most generic entries are dropped first.
+
+`notes.apply_corrections` closes the loop. The notes call already reads the whole transcript
+and infers that a garbled word was "Kubernetes"; reporting that explicitly lets the stored
+transcript be repaired and the term recorded in `~/.transcribe/glossary.json`, weighted
+above passively-mined terms. A word misheard once is primed correctly the next time.
+
 ## Meeting detection
 
 `segmentation.split_into_meetings()` combines three signals, each falling back to the next:
@@ -169,6 +182,19 @@ processing._write_meeting_outputs()  ──► destination/<date> <title>/
 slack.send_slack_notification()
 ```
 
+## Domain vocabulary
+
+Whisper's initial prompt is capped at `n_text_ctx / 2` = 224 tokens, so a domain
+vocabulary cannot accumulate globally: every term added crowds out another. `vocabulary.py`
+selects one per recording instead, from the calendar event (most specific), the configured
+seed, then a glossary ranked from terms recurring in past `notes.json` files, fitted to the
+budget so the most generic entries are dropped first.
+
+`notes.apply_corrections` closes the loop. The notes call already reads the whole transcript
+and infers that a garbled word was "Kubernetes"; reporting that explicitly lets the stored
+transcript be repaired and the term recorded in `~/.transcribe/glossary.json`, weighted
+above passively-mined terms. A word misheard once is primed correctly the next time.
+
 ## Meeting detection
 
 `audio.py` reads CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere` for every
@@ -243,6 +269,7 @@ src/transcribe/
 ├── camera.py        # CoreMediaIO: which cameras are in use
 ├── menubar.py       # menu bar app: manual override and signal visibility
 ├── media.py         # ffmpeg/ffprobe: probe, extract audio, lossless cut
+├── vocabulary.py    # assembles the whisper prompt from calendar + mined glossary
 ├── segments.py      # Segment and Meeting data model
 ├── whisper.py       # transcription with VAD, timestamped segments, model download
 ├── diarize.py       # sherpa-onnx speaker clustering and attribution

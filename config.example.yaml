@@ -69,7 +69,15 @@ whisper_threads: 8
 
 # Optional initial prompt biasing the decoder toward your vocabulary. Improves
 # proper nouns and technical jargon noticeably.
+# Seed vocabulary, not a list to maintain. Whisper caps the initial prompt at
+# 224 tokens, so it cannot simply accumulate; the prompt is assembled per
+# recording from the calendar event (title, attendees), a glossary mined from
+# your own past notes, and this seed, then fitted to the budget by priority.
+# Corrections the notes step makes are fed back in, so a term misheard once is
+# primed correctly next time.
 whisper_prompt: ""
+whisper_auto_prompt: true
+whisper_prompt_token_budget: 190
 # whisper_prompt: "Terraform, Kubernetes, MikroTik, BGP, IPsec, Cloudflare"
 
 # --- Meetings ---------------------------------------------------------------

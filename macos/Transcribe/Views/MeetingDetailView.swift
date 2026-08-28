@@ -3,7 +3,9 @@ import SwiftUI
 /// One meeting: its notes, its transcript, and the recording they came from.
 struct MeetingDetailView: View {
     let folder: MeetingFolder
+    let library: MeetingLibrary
 
+    @State private var contents: MeetingFolder.Contents?
     @State private var record: MeetingRecord?
     @State private var legacyTranscript: String?
     @State private var legacySummary: String?
@@ -30,7 +32,7 @@ struct MeetingDetailView: View {
         .navigationTitle(record?.displayTitle ?? folder.displayName)
         .navigationSubtitle(subtitle)
         .toolbar {
-            if folder.media != nil {
+            if contents?.media != nil {
                 ToolbarItem {
                     Toggle(isOn: $showPlayer) {
                         Label("Player", systemImage: "play.rectangle")
@@ -68,8 +70,8 @@ struct MeetingDetailView: View {
     @ViewBuilder
     private var content: some View {
         VSplitView {
-            if showPlayer, folder.media != nil {
-                PlayerPane(playback: playback, folder: folder)
+            if showPlayer, contents?.media != nil {
+                PlayerPane(playback: playback, media: contents?.media)
                     .frame(minHeight: 200, idealHeight: 320)
             }
 
@@ -109,7 +111,7 @@ struct MeetingDetailView: View {
         showPlayer = true
         playback.seek(
             toRecordingSecond: second,
-            meetingStart: record?.clipOffset(forMedia: folder.media) ?? 0
+            meetingStart: record?.clipOffset(forMedia: contents?.media) ?? 0
         )
     }
 
@@ -117,8 +119,13 @@ struct MeetingDetailView: View {
         loading = true
         defer { loading = false }
 
+        // The background pass may not have reached this folder yet, so listing
+        // it here is what keeps selection responsive.
+        let contents = await library.contents(of: folder)
+        self.contents = contents
+
         do {
-            record = try await MeetingLibrary.loadRecord(folder)
+            record = try await MeetingLibrary.loadRecord(contents.notesJSON)
         } catch {
             // A folder whose JSON will not parse still has its text files, so
             // the error is reported without giving up on the meeting.
@@ -126,18 +133,18 @@ struct MeetingDetailView: View {
         }
 
         if record == nil {
-            legacyTranscript = await MeetingLibrary.loadText(folder.transcriptText)
-            legacySummary = await MeetingLibrary.loadText(folder.summaryText)
+            legacyTranscript = await MeetingLibrary.loadText(contents.transcriptText)
+            legacySummary = await MeetingLibrary.loadText(contents.summaryText)
         }
 
-        await playback.open(folder.media)
+        await playback.open(contents.media)
     }
 }
 
 /// The recording itself, or an explanation of why it will not play.
 private struct PlayerPane: View {
     let playback: PlaybackController
-    let folder: MeetingFolder
+    let media: URL?
 
     var body: some View {
         switch playback.phase {
@@ -155,7 +162,7 @@ private struct PlayerPane: View {
             } description: {
                 Text(reason)
             } actions: {
-                if let media = folder.media {
+                if let media {
                     Button("Open in QuickTime") { NSWorkspace.shared.open(media) }
                     Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([media])

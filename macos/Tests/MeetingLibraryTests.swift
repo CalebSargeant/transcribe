@@ -51,18 +51,14 @@ struct FolderNameTests {
             ("No date here", "No date here"),
         ])
     func displayName(raw: String, expected: String) {
-        let folder = MeetingFolder(
-            id: URL(filePath: "/tmp/\(raw)"), name: raw, date: nil, notesJSON: nil,
-            transcriptText: nil, summaryText: nil, notesHTML: nil, media: nil)
+        let folder = MeetingFolder(id: URL(filePath: "/tmp/\(raw)"), name: raw, date: nil)
         #expect(folder.displayName == expected)
     }
 
     /// A folder whose name is nothing but a timestamp must not render blank.
     @Test("a name that is only a date keeps something to show")
     func dateOnlyName() {
-        let folder = MeetingFolder(
-            id: URL(filePath: "/tmp/x"), name: "2026-08-27 1105", date: nil, notesJSON: nil,
-            transcriptText: nil, summaryText: nil, notesHTML: nil, media: nil)
+        let folder = MeetingFolder(id: URL(filePath: "/tmp/x"), name: "2026-08-27 1105", date: nil)
         #expect(folder.displayName == "2026-08-27 1105")
     }
 }
@@ -242,13 +238,12 @@ struct SeekTests {
 
 @Suite("Scanning")
 struct ScanTests {
-    private func makeLibrary(_ build: (URL) throws -> Void) throws -> [MeetingFolder] {
+    private func makeLibrary(_ build: (URL) throws -> Void) throws -> ([MeetingFolder], URL) {
         let root = URL(filePath: NSTemporaryDirectory())
             .appending(path: "transcribe-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         try build(root)
-        return MeetingLibrary.scan(root: root)
+        return (MeetingLibrary.scan(root: root), root)
     }
 
     private func folder(_ root: URL, _ name: String, files: [String]) throws {
@@ -259,51 +254,77 @@ struct ScanTests {
         }
     }
 
+    /// The first pass draws the sidebar from folder names alone. Listing every
+    /// folder up front cost 13 seconds of wall clock on an iCloud library, all
+    /// of it before anything appeared on screen.
+    @Test("the first pass does no per-folder IO")
+    func scanIsNameOnly() throws {
+        let (folders, root) = try makeLibrary { root in
+            try folder(root, "2026-01-01 0900 Real", files: ["transcript.txt"])
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(folders.count == 1)
+        #expect(folders[0].displayName == "Real")
+        #expect(folders[0].date != nil)
+        #expect(folders[0].contents == nil)
+    }
+
+    @Test("newest first, undated last")
+    func ordering() throws {
+        let (folders, root) = try makeLibrary { root in
+            try folder(root, "2026-01-01 0900 Older", files: ["transcript.txt"])
+            try folder(root, "2026-06-01 0900 Newer", files: ["transcript.txt"])
+            try folder(root, "Undated", files: ["transcript.txt"])
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(folders.map(\.displayName) == ["Newer", "Older", "Undated"])
+    }
+
+    @Test("a missing root yields nothing rather than throwing")
+    func missingRoot() {
+        #expect(MeetingLibrary.scan(root: URL(filePath: "/nonexistent/meetings")).isEmpty)
+    }
+
     @Test("a folder with neither notes nor a transcript is not a meeting")
     func requiresContent() throws {
-        let folders = try makeLibrary { root in
-            try folder(root, "2026-01-01 0900 Real", files: ["transcript.txt"])
-            try folder(root, "2026-01-02 0900 Empty", files: ["random.pdf"])
+        let (_, root) = try makeLibrary { root in
+            try folder(root, "Real", files: ["transcript.txt"])
+            try folder(root, "Empty", files: ["random.pdf"])
         }
-        #expect(folders.map(\.displayName) == ["Real"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(MeetingLibrary.listContents(of: root.appending(path: "Real")).isMeeting)
+        #expect(!MeetingLibrary.listContents(of: root.appending(path: "Empty")).isMeeting)
     }
 
     /// Older folders carry only `<name>_transcription.txt`, and they are the
     /// bulk of an existing library.
     @Test("legacy folders are found and marked")
     func legacyLayout() throws {
-        let folders = try makeLibrary { root in
+        let (_, root) = try makeLibrary { root in
             try folder(
                 root, "2024-10-30 11-04-23 Old",
                 files: ["2024-10-30 11-04-23 Old_transcription.txt", "x_summary.txt"])
         }
-        #expect(folders.count == 1)
-        #expect(folders[0].isLegacy)
-        #expect(folders[0].transcriptText != nil)
-        #expect(folders[0].summaryText != nil)
-    }
-
-    @Test("newest first, undated last")
-    func ordering() throws {
-        let folders = try makeLibrary { root in
-            try folder(root, "2026-01-01 0900 Older", files: ["transcript.txt"])
-            try folder(root, "2026-06-01 0900 Newer", files: ["transcript.txt"])
-            try folder(root, "Undated", files: ["transcript.txt"])
-        }
-        #expect(folders.map(\.displayName) == ["Newer", "Older", "Undated"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let contents = MeetingLibrary.listContents(of: root.appending(path: "2024-10-30 11-04-23 Old"))
+        #expect(contents.isMeeting)
+        #expect(contents.isLegacy)
+        #expect(contents.transcriptText != nil)
+        #expect(contents.summaryText != nil)
     }
 
     /// Extracted audio sits beside the video; the video is what to play.
     @Test("video wins over the wav beside it")
     func prefersVideo() throws {
-        let folders = try makeLibrary { root in
-            try folder(root, "2026-01-01 0900 A", files: ["transcript.txt", "a.wav", "a.mov"])
+        let (_, root) = try makeLibrary { root in
+            try folder(root, "A", files: ["transcript.txt", "a.wav", "a.mov"])
         }
-        #expect(folders[0].media?.pathExtension == "mov")
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(MeetingLibrary.listContents(of: root.appending(path: "A")).media?.pathExtension == "mov")
     }
 
-    @Test("a missing root yields nothing rather than throwing")
-    func missingRoot() {
-        #expect(MeetingLibrary.scan(root: URL(filePath: "/nonexistent/meetings")).isEmpty)
+    @Test("listing a folder that is not there is empty, not a crash")
+    func missingFolder() {
+        #expect(!MeetingLibrary.listContents(of: URL(filePath: "/nonexistent/x")).isMeeting)
     }
 }

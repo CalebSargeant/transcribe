@@ -13,7 +13,7 @@ struct LibraryView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
             if let selection {
-                MeetingDetailView(folder: selection)
+                MeetingDetailView(folder: selection, library: library)
                     // Without this the detail view keeps the previously
                     // selected meeting's @State when the selection changes.
                     .id(selection.id)
@@ -65,16 +65,31 @@ struct LibraryView: View {
                 Button("Choose Folder…") { chooseFolder() }
             }
         case .loaded:
-            List(selection: $selection) {
-                ForEach(groups, id: \.key) { group in
-                    Section(group.key) {
-                        ForEach(group.value) { folder in
-                            MeetingRow(folder: folder).tag(folder)
+            VStack(spacing: 0) {
+                List(selection: $selection) {
+                    ForEach(groups, id: \.key) { group in
+                        Section(group.key) {
+                            ForEach(group.value) { folder in
+                                MeetingRow(folder: folder).tag(folder)
+                            }
                         }
                     }
                 }
+                .listStyle(.sidebar)
+
+                // The list is drawn from folder names alone; the files behind
+                // each one arrive after. On iCloud that second pass is slow
+                // enough to be worth saying so.
+                if library.enriching {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading folders…").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
             }
-            .listStyle(.sidebar)
         }
     }
 
@@ -134,7 +149,9 @@ private struct MeetingRow: View {
                 if let date = folder.date {
                     Text(date.formatted(date: .abbreviated, time: .shortened))
                 }
-                if folder.isLegacy {
+                // Only once the folder has been listed is this known, so the
+                // badge appears with the second pass rather than guessing.
+                if folder.contents?.isLegacy == true {
                     Text("transcript only")
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)

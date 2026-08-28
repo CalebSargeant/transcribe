@@ -1,24 +1,37 @@
 import Foundation
 
-/// One meeting folder on disk, as the sidebar needs to know it.
+/// One meeting folder on disk.
 ///
-/// Deliberately cheap: scanning 100+ folders at launch must not parse 100+
-/// `notes.json` files, each of which carries every transcript segment. The
-/// record is loaded only when the folder is selected.
+/// Split in two on purpose. The name and the date are all the sidebar needs and
+/// both come out of the folder name, so a list can be drawn without touching
+/// the filesystem at all. Everything else costs a directory listing, which on
+/// iCloud Drive means a round trip to the file provider: 105 folders measured
+/// at 13 seconds of wall clock for 0.14s of CPU. Doing that before first paint
+/// left the window on a spinner.
 struct MeetingFolder: Identifiable, Hashable, Sendable {
     let id: URL
     let name: String
     let date: Date?
-    let notesJSON: URL?
-    let transcriptText: URL?
-    let summaryText: URL?
-    let notesHTML: URL?
-    let media: URL?
 
-    /// Folders written before the JSON pipeline carry only a transcript and a
-    /// summary. They are the bulk of an existing library, so they stay
-    /// browsable rather than being hidden for lacking structure.
-    var isLegacy: Bool { notesJSON == nil }
+    /// Nil until the folder has been listed. See ``MeetingLibrary/contents(of:)``.
+    var contents: Contents?
+
+    struct Contents: Hashable, Sendable {
+        var notesJSON: URL?
+        var transcriptText: URL?
+        var summaryText: URL?
+        var notesHTML: URL?
+        var media: URL?
+
+        /// A directory with neither notes nor a transcript is something else
+        /// that happens to live in the meetings folder.
+        var isMeeting: Bool { notesJSON != nil || transcriptText != nil }
+
+        /// Folders written before the JSON pipeline carry only a transcript and
+        /// a summary. They are the bulk of an existing library, so they stay
+        /// browsable rather than being hidden for lacking structure.
+        var isLegacy: Bool { notesJSON == nil }
+    }
 
     /// The folder name with its timestamp stripped, since the sidebar shows the
     /// date separately. Covers this pipeline's two prefixes and Teams'
@@ -50,8 +63,11 @@ struct MeetingFolder: Identifiable, Hashable, Sendable {
 
 /// Scans a directory of meeting folders.
 ///
-/// The scan itself is `nonisolated` and returns a plain value so it can run off
-/// the main actor; only the published result hops back.
+/// Two passes. The first lists the root and is enough to draw the sidebar. The
+/// second fills in each folder's files in the background, at which point the
+/// badges settle and anything that turned out not to be a meeting drops out.
+/// Selecting a folder resolves that one immediately rather than waiting for the
+/// pass to reach it.
 @MainActor
 @Observable
 final class MeetingLibrary {
@@ -64,16 +80,19 @@ final class MeetingLibrary {
 
     private(set) var folders: [MeetingFolder] = []
     private(set) var phase: Phase = .idle
+    private(set) var enriching = false
     var root: URL?
 
-    /// Stamps each scan so a slow one that finishes after a newer one cannot
+    /// Stamps each load so a slow one that finishes after a newer one cannot
     /// overwrite it. `@MainActor` serialises access to the properties, not the
     /// body of an async method, which is released at every await.
-    private var scanID = 0
+    private var loadID = 0
+    private var enrichTask: Task<Void, Never>?
 
     func load(root: URL?) async {
-        scanID += 1
-        let id = scanID
+        loadID += 1
+        let id = loadID
+        enrichTask?.cancel()
         self.root = root
 
         guard let root else {
@@ -87,17 +106,74 @@ final class MeetingLibrary {
             Self.scan(root: root)
         }.value
 
-        guard id == scanID else { return }
+        guard id == loadID else { return }
         folders = found
-        phase = found.isEmpty
-            ? .failed("No meeting folders in \(root.path(percentEncoded: false)).")
+        phase =
+            found.isEmpty
+            ? .failed("Nothing in \(root.path(percentEncoded: false)).")
             : .loaded
+
+        guard !found.isEmpty else { return }
+        enrichTask = Task { await enrich(id: id) }
+    }
+
+    /// Lists every folder's files, a few at a time, updating the list as each
+    /// lands. Bounded because the file provider serves these one round trip at
+    /// a time and queueing all 105 at once buys nothing.
+    private func enrich(id: Int) async {
+        enriching = true
+        defer { if id == loadID { enriching = false } }
+
+        let batchSize = 8
+        var index = 0
+        while index < folders.count {
+            guard id == loadID, !Task.isCancelled else { return }
+
+            let batch = folders[index..<min(index + batchSize, folders.count)].map(\.id)
+            let resolved = await withTaskGroup(of: (URL, MeetingFolder.Contents).self) { group in
+                for url in batch {
+                    group.addTask { (url, Self.listContents(of: url)) }
+                }
+                var results: [URL: MeetingFolder.Contents] = [:]
+                for await (url, contents) in group { results[url] = contents }
+                return results
+            }
+
+            guard id == loadID, !Task.isCancelled else { return }
+            for position in folders.indices where folders[position].contents == nil {
+                if let contents = resolved[folders[position].id] {
+                    folders[position].contents = contents
+                }
+            }
+            index += batchSize
+        }
+
+        guard id == loadID, !Task.isCancelled else { return }
+        // Only now is it known which directories were never meetings.
+        folders.removeAll { $0.contents?.isMeeting == false }
+        if folders.isEmpty, let root {
+            phase = .failed("No meeting folders in \(root.path(percentEncoded: false)).")
+        }
+    }
+
+    /// The files in one folder, listing it now if the background pass has not
+    /// reached it yet. Selecting a meeting must not wait for the queue.
+    func contents(of folder: MeetingFolder) async -> MeetingFolder.Contents {
+        if let contents = folder.contents { return contents }
+        let url = folder.id
+        let contents = await Task.detached(priority: .userInitiated) {
+            Self.listContents(of: url)
+        }.value
+        if let position = folders.firstIndex(where: { $0.id == url }) {
+            folders[position].contents = contents
+        }
+        return contents
     }
 
     /// Reads one folder's `notes.json`. Off the main actor: the file runs to
     /// hundreds of kilobytes and parses hundreds of segments.
-    nonisolated static func loadRecord(_ folder: MeetingFolder) async throws -> MeetingRecord? {
-        guard let url = folder.notesJSON else { return nil }
+    nonisolated static func loadRecord(_ url: URL?) async throws -> MeetingRecord? {
+        guard let url else { return nil }
         return try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url)
             return try PipelineDate.decoder().decode(MeetingRecord.self, from: data)
@@ -113,12 +189,14 @@ final class MeetingLibrary {
 
     // MARK: - Scanning
 
-    // nonisolated because `scan` runs off the main actor. Without it this is a
+    // nonisolated because the scan runs off the main actor. Without it this is a
     // warning today and a hard error under the Swift 6 language mode.
     private nonisolated static let mediaExtensions: Set<String> = [
         "mov", "mp4", "m4a", "qta", "wav", "mp3",
     ]
 
+    /// Lists the root only. No per-folder IO, so this stays fast on a network
+    /// or cloud volume.
     nonisolated static func scan(root: URL) -> [MeetingFolder] {
         let manager = FileManager.default
         guard
@@ -131,39 +209,13 @@ final class MeetingLibrary {
 
         let folders = entries.compactMap { entry -> MeetingFolder? in
             guard
-                (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
-                let files = try? manager.contentsOfDirectory(
-                    at: entry,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                )
+                (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             else { return nil }
-
-            let name = entry.lastPathComponent
-            let byName = { (suffix: String) in
-                files.first { $0.lastPathComponent.hasSuffix(suffix) }
-            }
-
-            // A folder with neither a transcript nor notes is not a meeting.
-            let notesJSON = files.first { $0.lastPathComponent == "notes.json" }
-            let transcript = files.first { $0.lastPathComponent == "transcript.txt" }
-                ?? byName("_transcription.txt")
-            guard notesJSON != nil || transcript != nil else { return nil }
-
             return MeetingFolder(
                 id: entry,
-                name: name,
-                date: folderDate(from: name),
-                notesJSON: notesJSON,
-                transcriptText: transcript,
-                summaryText: files.first { $0.lastPathComponent == "summary.txt" }
-                    ?? byName("_summary.txt"),
-                notesHTML: files.first { $0.lastPathComponent == "notes.html" },
-                media: files
-                    .filter { mediaExtensions.contains($0.pathExtension.lowercased()) }
-                    // Prefer video over the extracted audio sitting beside it.
-                    .sorted { ($0.pathExtension.lowercased() == "wav" ? 1 : 0) < ($1.pathExtension.lowercased() == "wav" ? 1 : 0) }
-                    .first
+                name: entry.lastPathComponent,
+                date: folderDate(from: entry.lastPathComponent),
+                contents: nil
             )
         }
 
@@ -175,6 +227,37 @@ final class MeetingLibrary {
             case (nil, nil): return lhs.name > rhs.name
             }
         }
+    }
+
+    nonisolated static func listContents(of folder: URL) -> MeetingFolder.Contents {
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else { return MeetingFolder.Contents() }
+
+        let bySuffix = { (suffix: String) in
+            files.first { $0.lastPathComponent.hasSuffix(suffix) }
+        }
+
+        return MeetingFolder.Contents(
+            notesJSON: files.first { $0.lastPathComponent == "notes.json" },
+            transcriptText: files.first { $0.lastPathComponent == "transcript.txt" }
+                ?? bySuffix("_transcription.txt"),
+            summaryText: files.first { $0.lastPathComponent == "summary.txt" }
+                ?? bySuffix("_summary.txt"),
+            notesHTML: files.first { $0.lastPathComponent == "notes.html" },
+            media: files
+                .filter { mediaExtensions.contains($0.pathExtension.lowercased()) }
+                // Prefer video over the extracted audio sitting beside it.
+                .sorted {
+                    ($0.pathExtension.lowercased() == "wav" ? 1 : 0)
+                        < ($1.pathExtension.lowercased() == "wav" ? 1 : 0)
+                }
+                .first
+        )
     }
 
     /// The date is read from the folder name rather than from the filesystem,

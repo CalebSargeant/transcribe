@@ -337,6 +337,10 @@ def process_recording(video_file, config=None, write_json=False):
                             "  ✓ Named: "
                             + ", ".join(f"{label} → {name}" for label, name in named.items())
                         )
+                    else:
+                        # Silence here is indistinguishable from success at a
+                        # glance, and the causes need different fixes.
+                        print(f"  · No speakers named ({named.reason})")
 
             # Distinguish "no provider configured" from "the call failed": both
             # yield no notes, but only one of them is the user's doing.

@@ -206,12 +206,32 @@ def _condense(text, token_budget):
     )
 
 
+class SpeakerNames(dict):
+    """The names that were resolved, and why there were not more of them.
+
+    Naming comes back empty for four different reasons -- no provider, nobody
+    spoke long enough, the call failed, or the transcript simply does not say
+    who anyone is -- and only the last is a normal outcome. The log has to tell
+    them apart, but every caller wants the mapping. Subclassing dict carries the
+    explanation without making callers unpack a tuple to reach the names.
+    """
+
+    def __init__(self, mapping=None, reason=""):
+        super().__init__(mapping or {})
+        self.reason = reason
+
+
 def _naming_context(meeting, known_participants=None, window=SPEAKER_CONTEXT_SECONDS):
     """Return the passages that actually identify who is talking.
 
     Two things name a speaker: the opening, where people greet and introduce
     themselves, and any line where someone says a participant's name out loud.
     Everything else is subject matter.
+
+    The second half only works when ``known_participants`` is supplied. Without
+    a roster the opening is all there is, which on a long meeting is far too
+    little to place six voices -- the model reads two minutes of hellos and
+    returns low confidence for everyone.
 
     Sending more than that measurably backfires. Given ten minutes of
     surrounding transcript, deepseek-v4-pro spent its entire completion budget
@@ -250,7 +270,7 @@ def resolve_speaker_names(meeting, config, known_participants=None):
     a wrong name in the notes is worse than no name.
     """
     if not is_configured(config):
-        return {}
+        return SpeakerNames(reason="no LLM provider configured")
 
     # meeting.speakers() is ordered by talk time, so this keeps the people who
     # actually held the floor and drops the fragment tail.
@@ -264,7 +284,7 @@ def resolve_speaker_names(meeting, config, known_participants=None):
         if talk_times.get(label, 0.0) >= MIN_SPEAKER_SECONDS_TO_NAME
     ][:MAX_SPEAKERS_TO_NAME]
     if not labels:
-        return {}
+        return SpeakerNames(reason=f"no voice spoke for {MIN_SPEAKER_SECONDS_TO_NAME:.0f}s or more")
 
     samples = []
     for label in labels:
@@ -294,8 +314,8 @@ def resolve_speaker_names(meeting, config, known_participants=None):
         "Speakers to identify:\n"
         + "\n\n".join(samples)
         + roster
-        + "\n\nOpening and closing of the meeting, where people introduce "
-        "themselves and say goodbye:\n" + _naming_context(meeting)
+        + "\n\nPassages where people are named:\n"
+        + _naming_context(meeting, known_participants)
     )
 
     result = complete_json(
@@ -305,8 +325,8 @@ def resolve_speaker_names(meeting, config, known_participants=None):
         SPEAKER_SCHEMA,
         max_tokens=int(config.get("speaker_max_tokens", 16000)),
     )
-    if not result:
-        return {}
+    if result is None:
+        return SpeakerNames(reason="the naming call failed")
 
     mapping = {}
     for entry in result.get("speakers", []):
@@ -318,7 +338,11 @@ def resolve_speaker_names(meeting, config, known_participants=None):
     for segment in meeting.segments:
         if segment.speaker in mapping:
             segment.speaker = mapping[segment.speaker]
-    return mapping
+    if not mapping:
+        return SpeakerNames(
+            reason=f"no confident match for any of the {len(labels)} voice(s) put forward"
+        )
+    return SpeakerNames(mapping, reason=f"{len(mapping)} of {len(labels)} voice(s) named")
 
 
 def generate_notes(meeting, config, extra_context=None):

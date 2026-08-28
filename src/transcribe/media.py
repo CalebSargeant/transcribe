@@ -113,6 +113,11 @@ def extract_audio(video_path, audio_path):
             "error",
             "-i",
             video_path,
+            # Pin the first audio stream. Voice Memos' .qta carries both a
+            # normal AAC mix and an Apple Positional Audio (spatial) stream, and
+            # letting ffmpeg choose "best" can select the spatial one.
+            "-map",
+            "0:a:0",
             "-ar",
             "16000",
             "-ac",

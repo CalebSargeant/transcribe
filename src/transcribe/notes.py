@@ -457,13 +457,11 @@ def apply_corrections(meeting, notes, glossary_path=None, when=None):
         text = original
         for heard, correct in corrections:
             # Word-boundary, case-insensitive: a mis-hearing rarely matches case.
-            text = re.sub(rf"\b{re.escape(heard)}\b", correct, text, flags=re.IGNORECASE)
+            text = re.sub(rf"\b{re.escape(heard)}\b", lambda _m: correct, text, flags=re.IGNORECASE)
         if text != original:
             segment.text = text
             changed += 1
 
-    # Weighted by how often each correction was actually needed, so a term that
-    # recurs through a meeting outranks a one-off.
     record_terms(
         {correct: 1 for _, correct in corrections},
         path=glossary_path,

@@ -139,3 +139,48 @@ def test_extract_audio_absolutizes_path_against_option_injection(fake_run):
     calls, _ = fake_run
     media.extract_audio("-evil.mov", "/tmp/a.wav")
     assert calls[-1][calls[-1].index("-i") + 1].startswith("/")
+
+
+# --- stream selection when cutting -------------------------------------------
+
+
+def test_cut_maps_only_copyable_streams(fake_run):
+    """-map 0 also grabs tracks that cannot be stream-copied.
+
+    Voice Memos' .qta carries an Apple Positional Audio stream and an mebx
+    timed-metadata track; ffmpeg fails outright rather than skipping them.
+    """
+    calls, _ = fake_run
+    media.cut_video("/v.qta", "/out/clip.m4a", start=0.0, end=10.0)
+    cmd = calls[-1]
+    assert "0:v?" in cmd  # video only if present
+    assert "0:a:0" in cmd  # exactly one audio stream
+    assert cmd.count("-map") == 2
+    # The blanket map is what broke on multi-stream containers.
+    assert not any(part == "0" and cmd[index - 1] == "-map" for index, part in enumerate(cmd))
+
+
+def test_has_video_stream_true_when_ffprobe_lists_one(monkeypatch):
+    monkeypatch.setattr(
+        media.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="0\n", stderr=""),
+    )
+    assert media.has_video_stream("/v.mov") is True
+
+
+def test_has_video_stream_false_for_audio_only(monkeypatch):
+    monkeypatch.setattr(
+        media.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="", stderr=""),
+    )
+    assert media.has_video_stream("/a.m4a") is False
+
+
+def test_has_video_stream_false_when_ffprobe_fails(monkeypatch):
+    def _boom(*a, **k):
+        raise subprocess.CalledProcessError(1, a[0])
+
+    monkeypatch.setattr(media.subprocess, "run", _boom)
+    assert media.has_video_stream("/broken.mov") is False

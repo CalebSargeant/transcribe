@@ -15,7 +15,7 @@ from .llm import (
     is_configured,
     summarize_with_openai,
 )
-from .media import cut_video, probe_duration, recording_started_at
+from .media import cut_video, has_video_stream, probe_duration, recording_started_at
 from .notes import (
     apply_corrections,
     generate_notes,
@@ -127,7 +127,10 @@ def _write_meeting_outputs(
     written["json"] = str(dest_dir / "notes.json")
 
     if split_video:
-        clip = dest_dir / f"{safe_folder_name(dest_dir.name)}{Path(video_file).suffix}"
+        # An audio-only source produces an audio clip; keeping the source's
+        # container (.qta, say) would make a file nothing else opens.
+        suffix = Path(video_file).suffix if has_video_stream(video_file) else ".m4a"
+        clip = dest_dir / f"{safe_folder_name(dest_dir.name)}{suffix}"
         try:
             cut_video(video_file, str(clip), meeting.start, meeting.end)
             written["video"] = str(clip)

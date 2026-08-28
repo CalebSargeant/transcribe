@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT licensed. https://github.com/CalebSargeant/transcribe</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<true/>
+	<key>NSSupportsSuddenTermination</key>
+	<true/>
+
+	<!-- macOS attributes a permission request to the responsible process. When
+	     this app runs the transcribe CLI, that is this app, not the terminal
+	     the CLI was launched from, which is the whole reason for bundling it.
+	     Without these strings the request is denied outright rather than
+	     prompting, and nothing appears in System Settings to grant later. -->
+	<key>NSCalendarsUsageDescription</key>
+	<string>Transcribe reads your calendar to title meetings and list who was invited.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Transcribe reads your calendar to title meetings and list who was invited.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Transcribe watches microphone activity to notice when a meeting starts.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Transcribe checks whether the camera is in use to confirm a meeting is under way.</string>
+</dict>
+</plist>

@@ -209,3 +209,8 @@ __marimo__/
 .idea/
 
 models/*.bin
+# macOS app
+macos/build/
+macos/DerivedData/
+macos/*.xcodeproj/project.xcworkspace/xcuserdata/
+macos/*.xcodeproj/xcuserdata/

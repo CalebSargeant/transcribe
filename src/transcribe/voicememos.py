@@ -47,55 +47,12 @@ class VoiceMemosUnavailable(RuntimeError):
     """Raised when the Voice Memos library cannot be read."""
 
 
-def _responsible_app():
-    """Walk up the process tree to the enclosing .app bundle, if there is one.
-
-    macOS attributes a permission request to the *responsible* process, which
-    for a command-line tool is the terminal it was launched from, not the tool
-    itself. Naming that app saves the user guessing which entry to add.
-    """
-    import re
-    import subprocess
-
-    pid = os.getpid()
-    for _ in range(12):  # a shell chain is short; this is a guard, not a limit
-        try:
-            result = subprocess.run(
-                ["ps", "-o", "ppid=,comm=", "-p", str(pid)],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (subprocess.SubprocessError, OSError):
-            return None
-        parts = result.stdout.strip().split(None, 1)
-        if len(parts) != 2:
-            return None
-        parent, command = parts
-        match = re.search(r"/([^/]+\.app)/Contents/MacOS/", command)
-        if match:
-            return match.group(1)[:-4]
-        try:
-            pid = int(parent)
-        except ValueError:
-            return None
-        if pid <= 1:
-            return None
-    return None
-
-
 def _full_disk_access_hint():
-    """Explain which app to grant, naming it when it can be worked out."""
-    app = _responsible_app()
-    target = f"**{app}**" if app else "the terminal app you are running this from"
-    return (
-        f"The Voice Memos library needs Full Disk Access, granted to {target}.\n"
-        "  System Settings > Privacy & Security > Full Disk Access, then the '+' "
-        "button.\n"
-        "  Full Disk Access never fills itself in from a denied request, so nothing "
-        "will appear there on its own; you have to add the app yourself.\n"
-        f"  Quit {app or 'the app'} completely (Cmd-Q) and reopen it afterwards: the "
-        "permission is only re-read at launch."
+    """Explain which app to grant Full Disk Access to."""
+    from .permissions import grant_hint
+
+    return "The Voice Memos library needs Full Disk Access.\n" + grant_hint(
+        "Full Disk Access", needs_manual_add=True
     )
 
 

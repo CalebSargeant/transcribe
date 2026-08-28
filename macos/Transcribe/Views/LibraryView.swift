@@ -2,10 +2,10 @@ import SwiftUI
 
 /// The main window: meetings down the left, the selected one on the right.
 struct LibraryView: View {
+    @Environment(Settings.self) private var settings
     @State private var library = MeetingLibrary()
     @State private var selection: MeetingFolder?
     @State private var search = ""
-    @AppStorage("meetingsFolderPath") private var storedRoot = ""
 
     var body: some View {
         NavigationSplitView {
@@ -37,15 +37,16 @@ struct LibraryView: View {
             }
             ToolbarItem {
                 Button {
-                    Task { await library.load(root: resolvedRoot) }
+                    Task { await library.load(root: settings.folder(ConfigKey.destination)) }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .help("Rescan the meetings folder")
             }
         }
-        .task {
-            await library.load(root: resolvedRoot)
+        .task(id: settings.folder(ConfigKey.destination)) {
+            // Reloads on its own when the folder is changed in Settings.
+            await library.load(root: settings.folder(ConfigKey.destination))
         }
     }
 
@@ -140,11 +141,6 @@ struct LibraryView: View {
 
     // MARK: - Folder selection
 
-    private var resolvedRoot: URL? {
-        if !storedRoot.isEmpty { return URL(filePath: storedRoot) }
-        return Configuration.load().destinationDirectory
-    }
-
     private func chooseFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -152,11 +148,12 @@ struct LibraryView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "Use Folder"
         panel.message = "Pick the folder your meetings are saved to."
-        panel.directoryURL = resolvedRoot
+        panel.directoryURL = settings.folder(ConfigKey.destination)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        storedRoot = url.path(percentEncoded: false)
         selection = nil
-        Task { await library.load(root: url) }
+        // Writing it through is what makes .task(id:) reload, and what the CLI
+        // will read on its next run.
+        settings.setFolder(ConfigKey.destination, url)
     }
 }
 
@@ -189,4 +186,5 @@ private struct MeetingRow: View {
 
 #Preview {
     LibraryView()
+        .environment(Settings(config: Configuration(values: [:])))
 }

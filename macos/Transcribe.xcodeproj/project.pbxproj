@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		06E69E32E12F97685AEDB282 /* MeetingLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE0890EC4EC4F1F56D29D18 /* MeetingLibraryTests.swift */; };
+		1C6D3B0721AFE81E66890DEB /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8393E11D5017B8A9BEE10728 /* Settings.swift */; };
 		34F32004E059BA16037A5A07 /* VideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AC6BA843A20A1824BF1A27 /* VideoPlayerView.swift */; };
 		4C7200D35101E648E1869301 /* TranscribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3728B9017E90AE95A990BF04 /* TranscribeApp.swift */; };
 		4E5E02CAC0060658543AD377 /* MeetingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10CF491F820F6130C5AE790 /* MeetingLibrary.swift */; };
@@ -42,6 +43,7 @@
 		3D5D1F6F0BA4814D510824ED /* Transcribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Transcribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE0890EC4EC4F1F56D29D18 /* MeetingLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLibraryTests.swift; sourceTree = "<group>"; };
 		7FE7BA7FD38024E5F83ADF50 /* Meeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Meeting.swift; sourceTree = "<group>"; };
+		8393E11D5017B8A9BEE10728 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		88C08D62FE4A43D7EC6B1D0D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		93AC6BA843A20A1824BF1A27 /* VideoPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerView.swift; sourceTree = "<group>"; };
 		A634408654575E8D9B860F63 /* TranscriptPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptPane.swift; sourceTree = "<group>"; };
@@ -79,6 +81,7 @@
 			children = (
 				E2FD6196D6E0CB8BBB037D3E /* Configuration.swift */,
 				1ACC722A6349F4EA59287B7A /* PlaybackController.swift */,
+				8393E11D5017B8A9BEE10728 /* Settings.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -239,6 +242,7 @@
 				4E5E02CAC0060658543AD377 /* MeetingLibrary.swift in Sources */,
 				6332DE802A0613EECB7992DB /* NotesPane.swift in Sources */,
 				E3217A07BE9EF1C70C15EAD5 /* PlaybackController.swift in Sources */,
+				1C6D3B0721AFE81E66890DEB /* Settings.swift in Sources */,
 				66544E4288BFEA8DF45852B4 /* SettingsView.swift in Sources */,
 				4C7200D35101E648E1869301 /* TranscribeApp.swift in Sources */,
 				EA1EAFCAFA7DA97D592556BF /* TranscriptPane.swift in Sources */,

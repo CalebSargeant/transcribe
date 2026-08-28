@@ -328,3 +328,140 @@ struct ScanTests {
         #expect(!MeetingLibrary.listContents(of: URL(filePath: "/nonexistent/x")).isMeeting)
     }
 }
+
+@Suite("Writing config.yaml")
+struct ConfigWriteTests {
+    /// The CLI's own save_config round-trips through yaml.dump and loses every
+    /// comment in the file. Editing the line in place keeps them.
+    @Test("comments and untouched keys survive an edit")
+    func preservesEverythingElse() {
+        let original = """
+            # Where recordings are watched for
+            watch_directory: /Users/x/Movies
+
+            # The provider used for notes
+            llm_provider: claude
+            anthropic_model: claude-haiku-4-5-20251001
+            """
+        let updated = Configuration.apply(["llm_provider": "openai"], to: original)
+        #expect(updated.contains("# Where recordings are watched for"))
+        #expect(updated.contains("# The provider used for notes"))
+        #expect(updated.contains("watch_directory: /Users/x/Movies"))
+        #expect(updated.contains("llm_provider: openai"))
+        #expect(!updated.contains("llm_provider: claude"))
+        #expect(updated.contains("anthropic_model: claude-haiku-4-5-20251001"))
+    }
+
+    /// The wrapped value spans two lines. Replacing only the first would leave
+    /// the tail behind as a stray line that reparses as part of the new value.
+    @Test("a folded value is replaced whole")
+    func replacesFoldedValue() {
+        let original = """
+            destination_directory: /Users/x/Library/Mobile Documents/60-69
+              Work & Career/62 Files/Meetings
+            llm_provider: claude
+            """
+        let updated = Configuration.apply(["destination_directory": "/tmp/new"], to: original)
+        #expect(!updated.contains("Work & Career"))
+        #expect(updated.contains("llm_provider: claude"))
+        #expect(Configuration.scalars(in: updated)["destination_directory"] == "/tmp/new")
+    }
+
+    @Test("a key the file lacks is appended")
+    func appendsNewKey() {
+        let updated = Configuration.apply(["slack_webhook_url": "https://hooks.slack.com/x"],
+                                          to: "llm_provider: claude")
+        let values = Configuration.scalars(in: updated)
+        #expect(values["llm_provider"] == "claude")
+        #expect(values["slack_webhook_url"] == "https://hooks.slack.com/x")
+    }
+
+    @Test("writing to an empty file works")
+    func emptyFile() {
+        #expect(Configuration.scalars(in: Configuration.apply(["a": "b"], to: ""))["a"] == "b")
+    }
+
+    /// Nested maps and lists are not modelled, so they must pass through
+    /// untouched rather than be flattened or dropped.
+    @Test("structures this does not model are left alone")
+    func leavesStructuresAlone() {
+        let original = """
+            known_participants:
+              - Arno
+              - Caleb
+            llm_provider: claude
+            """
+        let updated = Configuration.apply(["llm_provider": "openai"], to: original)
+        #expect(updated.contains("  - Arno"))
+        #expect(updated.contains("  - Caleb"))
+        #expect(updated.contains("llm_provider: openai"))
+    }
+
+    @Test(
+        "values that would reparse as something else are quoted",
+        arguments: [
+            ("", "\"\""),
+            ("plain value", "plain value"),
+            ("/tmp/a b/c", "/tmp/a b/c"),
+            ("key: value", "\"key: value\""),
+            ("trailing ", "\"trailing \""),
+            ("has #hash", "\"has #hash\""),
+            ("has # comment", "\"has # comment\""),
+        ])
+    func quoting(value: String, expected: String) {
+        let updated = Configuration.apply(["k": value], to: "k: old")
+        #expect(updated.trimmingCharacters(in: .whitespacesAndNewlines) == "k: \(expected)")
+    }
+
+    /// Whatever the quoting does, reading it back must give the value handed in.
+    @Test(
+        "every value round trips",
+        arguments: [
+            "plain", "/Users/x/Mobile Documents/60-69 Work & Career/Meetings",
+            "key: value", "sk-ant-abc123", "https://hooks.slack.com/services/A/B/C",
+            "has #hash", "0.8", "true",
+        ])
+    func roundTrip(value: String) {
+        let updated = Configuration.apply(["k": value], to: "k: old\nother: keep")
+        #expect(Configuration.scalars(in: updated)["k"] == value)
+        #expect(Configuration.scalars(in: updated)["other"] == "keep")
+    }
+
+    @Test("several keys in one pass")
+    func multipleKeys() {
+        let updated = Configuration.apply(
+            ["llm_provider": "openai", "whisper_model": "medium", "new_key": "x"],
+            to: "llm_provider: claude\nwhisper_model: large-v3-turbo\nkeep: me")
+        let values = Configuration.scalars(in: updated)
+        #expect(values["llm_provider"] == "openai")
+        #expect(values["whisper_model"] == "medium")
+        #expect(values["new_key"] == "x")
+        #expect(values["keep"] == "me")
+    }
+
+    /// The file holds API keys, so its mode matters as much as its contents.
+    @Test("the written file is not world readable")
+    func fileMode() throws {
+        let directory = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "transcribe-cfg-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "config.yaml")
+        try Configuration.write(["anthropic_api_key": "sk-ant-secret"], to: url)
+
+        let mode = try #require(
+            FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)
+        #expect(mode.int16Value & 0o077 == 0)
+        #expect(Configuration.load(from: url).string("anthropic_api_key") == "sk-ant-secret")
+    }
+
+    @Test("typed reads fall back when a key is absent or unparseable")
+    func typedReads() {
+        let config = Configuration(values: ["n": "notanumber", "b": "yes", "d": "0.75"])
+        #expect(config.int("n", default: 7) == 7)
+        #expect(config.int("missing", default: 7) == 7)
+        #expect(config.bool("b", default: false))
+        #expect(config.bool("missing", default: true))
+        #expect(config.double("d", default: 0.8) == 0.75)
+        #expect(config.url("missing") == nil)
+    }
+}

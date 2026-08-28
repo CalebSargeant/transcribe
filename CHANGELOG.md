@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recording from the calendar event, a glossary mined from past notes, and the configured
   seed, fitted to the budget by priority. Corrections the notes step makes are fed back
   into the glossary, so a term misheard once is primed correctly next time.
+- Decoder repetition loops are collapsed. VAD stops a loop propagating for hours, but one
+  inside a single speech chunk still got through: a 53-minute meeting ended with the same
+  sentence 23 times, and the notes step dutifully summarised it as content. Runs of
+  identical consecutive lines are collapsed, and long lines are compared by similarity
+  because a loop drifts as it repeats ("We're going to..." becomes "It's going to...").
+- Closing chatter is no longer promoted to a meeting of its own. Two minutes of goodbyes
+  and lunch plans passed the duration test and got a title, a summary and invented next
+  steps. A trailing stretch is now measured on distinct content, not elapsed time, and
+  folded back into the meeting it ends.
 - **HTML notes output** alongside Markdown and JSON.
 - Slack notifications link to the destination folder's storage. Google Drive deep-links to
   the folder; iCloud Drive links to iCloud Drive, because it has no path-addressable web

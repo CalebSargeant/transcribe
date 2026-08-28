@@ -13,6 +13,7 @@ Each signal degrades to the next, so this works with no calendar and no API key
 -- it just gets less precise.
 """
 
+import re
 from datetime import timedelta
 from itertools import pairwise
 
@@ -129,6 +130,40 @@ def _build_meetings(buckets):
             )
         )
     return meetings
+
+
+def _distinct_content(meeting):
+    """Seconds of speech in a meeting, ignoring repeated lines.
+
+    A closing stretch of "bye", "yeah" and a looping hallucination can pass a
+    duration test while carrying nothing worth writing notes about.
+    """
+    seen = set()
+    total = 0.0
+    for segment in meeting.segments:
+        key = re.sub(r"[^a-z0-9 ]", "", segment.text.lower()).strip()
+        if key and key not in seen:
+            seen.add(key)
+            total += segment.duration
+    return total
+
+
+def _merge_trailing_fragment(meetings, minimum):
+    """Fold a content-free tail back into the meeting it followed.
+
+    Detection can split the goodbyes off as their own meeting, which then gets a
+    title, a summary and invented next steps for two minutes of lunch plans.
+    """
+    if len(meetings) < 2:
+        return meetings
+    last = meetings[-1]
+    if _distinct_content(last) >= minimum:
+        return meetings
+
+    previous = meetings[-2]
+    previous.segments.extend(last.segments)
+    previous.end = last.end
+    return meetings[:-1]
 
 
 def _drop_short(meetings, minimum):
@@ -294,7 +329,10 @@ def _llm_boundaries(segments, gaps, config, calendar_events):
         "- The subject changes completely, with no reference back to what came before.\n"
         "- A long silence followed by an unrelated conversation.\n\n"
         "NOT a boundary: a pause for a demo or screen share, someone stepping away, "
-        "a tangent, or moving to the next agenda item within the same meeting.\n\n"
+        "a tangent, or moving to the next agenda item within the same meeting. In "
+        "particular, the goodbyes, small talk and lunch plans at the end of a call "
+        "belong to the meeting they close, however unrelated they sound. Do not split "
+        "them off: a trailing fragment is not a meeting.\n\n"
         "Prefer fewer, larger meetings when the evidence is weak. Every "
         "start_timestamp must be copied verbatim from a [HH:MM:SS] marker in the "
         "transcript, and the first meeting must start at 00:00:00."
@@ -365,6 +403,9 @@ def split_into_meetings(segments, config=None, calendar_events=None, recording_s
         boundaries = [gap[1] for gap in gaps]
 
     meetings = _drop_short(_build_meetings(_split_at(segments, boundaries)), min_meeting)
+    meetings = _merge_trailing_fragment(meetings, min_meeting)
+    for index, meeting in enumerate(meetings, start=1):
+        meeting.index = index
 
     # Attach whatever titles and attendees the evidence gave us.
     for meeting in meetings:

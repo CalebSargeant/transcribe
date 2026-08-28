@@ -4,6 +4,9 @@ import SwiftUI
 struct MeetingDetailView: View {
     let folder: MeetingFolder
     let library: MeetingLibrary
+    /// A point in the recording to jump to once it is ready, set when the
+    /// meeting was opened from a search result.
+    var seekOnOpen: Double?
 
     @Environment(TagIndex.self) private var tags
     @Environment(Pipeline.self) private var pipeline
@@ -99,8 +102,8 @@ struct MeetingDetailView: View {
 
             VStack(spacing: 0) {
                 TagBar(folder: folder)
-                if pipeline.isRunning || pipeline.state != .idle {
-                    PipelineBar()
+                if pipeline.state != .idle {
+                    PipelineStatusBar()
                 }
                 Divider()
 
@@ -166,6 +169,12 @@ struct MeetingDetailView: View {
         }
 
         await playback.open(contents.media)
+
+        // Only now is there a player to seek.
+        if let seekOnOpen {
+            tab = .transcript
+            seek(to: seekOnOpen)
+        }
     }
 }
 
@@ -290,51 +299,5 @@ private struct TagBar: View {
         } catch {
             self.error = "Could not save categories"
         }
-    }
-}
-
-/// What the command line tool is doing, and what it said.
-private struct PipelineBar: View {
-    @Environment(Pipeline.self) private var pipeline
-    @State private var showLog = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                switch pipeline.state {
-                case .idle:
-                    EmptyView()
-                case .running(let label):
-                    ProgressView().controlSize(.small)
-                    Text("\(label)… this takes about as long as the meeting.")
-                        .font(.callout)
-                    Spacer()
-                    Button("Cancel") { pipeline.cancel() }
-                case .finished(let label):
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("\(label) finished. Refresh to see it.").font(.callout)
-                    Spacer()
-                case .failed(let message):
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(message).font(.callout).lineLimit(2)
-                    Spacer()
-                }
-                if !pipeline.output.isEmpty {
-                    Button(showLog ? "Hide log" : "Show log") { showLog.toggle() }
-                }
-            }
-            if showLog, !pipeline.output.isEmpty {
-                ScrollView {
-                    Text(pipeline.output)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 160)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.4))
     }
 }

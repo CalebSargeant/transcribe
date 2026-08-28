@@ -1,84 +1,83 @@
 import SwiftUI
 
-/// The main window: meetings down the left, the selected one on the right.
+/// The main window: meetings down the left, whatever is selected on the right.
 struct LibraryView: View {
     @Environment(Settings.self) private var settings
     @Environment(TagIndex.self) private var tags
+    @Environment(MeetingIndex.self) private var index
+    @Environment(Pipeline.self) private var pipeline
+    @Environment(WatchQueue.self) private var queue
+
     @State private var library = MeetingLibrary()
-    @State private var selection: MeetingFolder?
+    @State private var selection: Selection?
     @State private var search = ""
     @State private var tagFilter: String?
+    /// Set when a search result is opened, so the meeting can jump straight to
+    /// the line that matched.
+    @State private var pendingSeek: Double?
+
+    /// What the detail pane is showing. A meeting is one case among several so
+    /// the action list and the queue are first-class destinations rather than
+    /// sheets bolted onto the side.
+    enum Selection: Hashable {
+        case meeting(MeetingFolder)
+        case actions
+        case queue
+    }
+
+    private var searching: Bool {
+        !search.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     var body: some View {
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         } detail: {
-            if let selection {
-                MeetingDetailView(folder: selection, library: library)
+            detail
+        }
+        .searchable(text: $search, placement: .sidebar, prompt: "Search every transcript")
+        .toolbar { toolbar }
+        .task(id: settings.folder(ConfigKey.destination)) {
+            // Reloads on its own when the folder is changed in Settings.
+            await refresh()
+        }
+    }
+
+    // MARK: - Detail
+
+    @ViewBuilder
+    private var detail: some View {
+        if searching {
+            SearchResultsView(query: search) { folder, seconds in
+                open(folder: folder, seek: seconds)
+            }
+        } else {
+            switch selection {
+            case .meeting(let folder):
+                MeetingDetailView(folder: folder, library: library, seekOnOpen: pendingSeek)
                     // Without this the detail view keeps the previously
                     // selected meeting's @State when the selection changes.
-                    .id(selection.id)
-            } else {
+                    .id(folder.id)
+            case .actions:
+                ActionItemsView { folder in open(folder: folder, seek: nil) }
+            case .queue:
+                WatchQueueView()
+            case nil:
                 ContentUnavailableView(
                     "No meeting selected",
                     systemImage: "waveform",
-                    description: Text("Pick a meeting from the list.")
+                    description: Text("Pick a meeting, or search across every transcript.")
                 )
             }
         }
-        .searchable(text: $search, placement: .sidebar, prompt: "Search meetings")
-        .toolbar {
-            ToolbarItem {
-                Menu {
-                    Button("All meetings") { tagFilter = nil }
-                    if !tags.allTags.isEmpty {
-                        Divider()
-                        ForEach(tags.allTags, id: \.self) { tag in
-                            Button {
-                                tagFilter = tag
-                            } label: {
-                                if tagFilter == tag {
-                                    Label(tag, systemImage: "checkmark")
-                                } else {
-                                    Text(tag)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Label(
-                        tagFilter ?? "All categories",
-                        systemImage: tagFilter == nil ? "tag" : "tag.fill"
-                    )
-                }
-                .help("Show only meetings in one category")
-            }
-            ToolbarItem {
-                Button {
-                    chooseFolder()
-                } label: {
-                    Label("Change Meetings Folder", systemImage: "folder.badge.gearshape")
-                }
-                .help("Change which folder this app lists meetings from")
-            }
-            ToolbarItem {
-                Button {
-                    Task {
-                        await library.load(root: settings.folder(ConfigKey.destination))
-                        await tags.load(folders: library.folders)
-                    }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .help("Rescan the meetings folder for new or changed meetings")
-            }
-        }
-        .task(id: settings.folder(ConfigKey.destination)) {
-            // Reloads on its own when the folder is changed in Settings.
-            await library.load(root: settings.folder(ConfigKey.destination))
-            await tags.load(folders: library.folders)
-        }
+    }
+
+    private func open(folder: URL, seek: Double?) {
+        guard let match = library.folders.first(where: { $0.id == folder }) else { return }
+        pendingSeek = seek
+        search = ""
+        selection = .meeting(match)
     }
 
     // MARK: - Sidebar
@@ -104,61 +103,72 @@ struct LibraryView: View {
             } description: {
                 Text(
                     "\(url.path(percentEncoded: false))\n\nmacOS is blocking this app from "
-                    + "reading it. Choosing the folder below grants access. Granting Transcribe "
-                    + "Full Disk Access in System Settings > Privacy & Security also works."
+                        + "reading it. Choosing the folder below grants access. Granting Transcribe "
+                        + "Full Disk Access in System Settings > Privacy & Security also works."
                 )
             } actions: {
                 Button("Choose Folder…") { chooseFolder() }
                 Button("Open Privacy Settings") {
-                    if let settings = URL(
+                    if let settingsURL = URL(
                         string:
                             "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
                     ) {
-                        NSWorkspace.shared.open(settings)
+                        NSWorkspace.shared.open(settingsURL)
                     }
                 }
             }
         case .loaded:
             VStack(spacing: 0) {
                 List(selection: $selection) {
+                    Section {
+                        Label("Action items", systemImage: "checklist")
+                            .badge(index.allActions.count)
+                            .tag(Selection.actions)
+                        Label("Recording queue", systemImage: "tray.full")
+                            .badge(queue.pending.count)
+                            .tag(Selection.queue)
+                    }
+
                     ForEach(groups, id: \.key) { group in
                         Section(group.key) {
                             ForEach(group.value) { folder in
-                                MeetingRow(folder: folder).tag(folder)
+                                MeetingRow(folder: folder).tag(Selection.meeting(folder))
                             }
                         }
                     }
                 }
                 .listStyle(.sidebar)
 
-                // The list is drawn from folder names alone; the files behind
-                // each one arrive after. On iCloud that second pass is slow
-                // enough to be worth saying so.
-                if library.enriching {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Reading folders…").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                }
+                statusFooter
             }
         }
     }
 
-    private var filtered: [MeetingFolder] {
-        let query = search.trimmingCharacters(in: .whitespaces)
-        return library.folders.filter { folder in
-            if let tagFilter,
-                !tags.tags(for: folder.id).contains(where: {
-                    $0.caseInsensitiveCompare(tagFilter) == .orderedSame
-                })
-            { return false }
-            if !query.isEmpty, !folder.name.localizedCaseInsensitiveContains(query) {
-                return false
+    @ViewBuilder
+    private var statusFooter: some View {
+        // The list is drawn from folder names alone; the files behind each one
+        // and the transcript index both arrive after.
+        if library.enriching || index.building {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(
+                    index.building
+                        ? "Indexing transcripts… \(Int(index.progress * 100))%"
+                        : "Reading folders…"
+                )
+                .font(.caption).foregroundStyle(.secondary)
+                Spacer()
             }
-            return true
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var filtered: [MeetingFolder] {
+        library.folders.filter { folder in
+            guard let tagFilter else { return true }
+            return tags.tags(for: folder.id)
+                .contains { $0.caseInsensitiveCompare(tagFilter) == .orderedSame }
         }
     }
 
@@ -177,7 +187,74 @@ struct LibraryView: View {
         return order.map { ($0, buckets[$0] ?? []) }
     }
 
-    // MARK: - Folder selection
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem {
+            Menu {
+                Button("All meetings") { tagFilter = nil }
+                if !tags.allTags.isEmpty {
+                    Divider()
+                    ForEach(tags.allTags, id: \.self) { tag in
+                        Button {
+                            tagFilter = tag
+                        } label: {
+                            if tagFilter == tag {
+                                Label(tag, systemImage: "checkmark")
+                            } else {
+                                Text(tag)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("Categorise \(untagged.count) uncategorised…") { categoriseUntagged() }
+                    .disabled(pipeline.isRunning || untagged.isEmpty)
+            } label: {
+                Label(
+                    tagFilter ?? "All categories",
+                    systemImage: tagFilter == nil ? "tag" : "tag.fill"
+                )
+            }
+            .help("Filter by category, or have the notes provider assign them")
+        }
+        ToolbarItem {
+            Button {
+                chooseFolder()
+            } label: {
+                Label("Change Meetings Folder", systemImage: "folder.badge.gearshape")
+            }
+            .help("Change which folder this app lists meetings from")
+        }
+        ToolbarItem {
+            Button {
+                Task { await refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .help("Rescan the meetings folder for new or changed meetings")
+        }
+    }
+
+    private var untagged: [URL] {
+        library.folders.map(\.id).filter { tags.tags(for: $0).isEmpty }
+    }
+
+    private func categoriseUntagged() {
+        pipeline.categorise(folders: untagged)
+    }
+
+    private func refresh() async {
+        await library.load(root: settings.folder(ConfigKey.destination))
+        await tags.load(folders: library.folders)
+        index.build(folders: library.folders)
+        await queue.load(
+            watch: settings.folder(ConfigKey.watch),
+            index: index.meetings,
+            library: library.folders
+        )
+    }
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
@@ -232,11 +309,4 @@ private struct MeetingRow: View {
         }
         .padding(.vertical, 2)
     }
-}
-
-#Preview {
-    LibraryView()
-        .environment(Settings(config: Configuration(values: [:])))
-        .environment(TagIndex())
-        .environment(Pipeline())
 }

@@ -351,6 +351,9 @@ def _print_usage():
     print("  transcribe setup-daemon           - Install background daemon")
     print("  transcribe autorecord             - Record meetings automatically via OBS")
     print("  transcribe setup-autorecord       - Install the auto-record agent")
+    print("  transcribe categorise [folders]   - Label meetings with categories")
+    print("       --overwrite    replace categories that are already set")
+    print("  transcribe record start|stop      - Drive an OBS recording")
     print("  transcribe voicememos [--import]  - List/import macOS Voice Memos")
     print("       --debug        show the library schema")
     print("       --all          every memo, not just the last day")
@@ -426,6 +429,41 @@ def main():
         try:
             run_menubar(load_config())
         except MenuBarUnavailable as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+    elif command == "categorise" or command == "categorize":
+        from .categorise import categorise_folders
+
+        config = load_config()
+        folders = [a for a in args[1:] if not a.startswith("--")]
+        if not folders:
+            # No folders given means every meeting that has none yet.
+            destination = Path(config["destination_directory"])
+            folders = sorted(str(p) for p in destination.glob("*") if p.is_dir())
+        sys.exit(categorise_folders(folders, config, overwrite="--overwrite" in args))
+    elif command == "record":
+        from .autorecord import (
+            ObsUnavailable,
+            connect,
+            is_recording,
+            launch_obs,
+            start_recording,
+            stop_recording,
+        )
+
+        action = args[1] if len(args) > 1 else "status"
+        config = load_config()
+        try:
+            if action == "start":
+                launch_obs()
+            client = connect(config)
+            if action == "start":
+                print("✓ Recording" if start_recording(client) else "Already recording")
+            elif action == "stop":
+                print("✓ Stopped" if stop_recording(client) else "Not recording")
+            else:
+                print("recording" if is_recording(client) else "idle")
+        except ObsUnavailable as e:
             print(f"✗ {e}")
             sys.exit(1)
     elif command == "watch":

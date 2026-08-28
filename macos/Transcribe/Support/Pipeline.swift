@@ -46,10 +46,7 @@ final class Pipeline {
     /// Reprocess one meeting folder's recording, which regenerates its notes.
     func regenerate(folder: MeetingFolder, media: URL?, label: String) {
         guard let tool = Self.locate() else {
-            state = .failed(
-                "The transcribe command line tool was not found. Install it with "
-                    + "'brew install calebsargeant/tap/transcribe'."
-            )
+            state = .failed(missingToolMessage)
             return
         }
         guard let media else {
@@ -57,6 +54,53 @@ final class Pipeline {
             return
         }
         run(tool: tool, arguments: [media.path(percentEncoded: false)], label: label)
+    }
+
+    /// Process one recording from the watch folder.
+    func process(_ url: URL) {
+        guard let tool = Self.locate() else {
+            state = .failed(missingToolMessage)
+            return
+        }
+        run(tool: tool, arguments: [url.path(percentEncoded: false)], label: "Processing \(url.lastPathComponent)")
+    }
+
+    /// Ask the CLI to categorise meetings using the configured LLM.
+    ///
+    /// The provider, key, model and prompt all live in the Python already;
+    /// re-implementing an LLM client here would be a second thing to configure
+    /// and a second thing to get wrong.
+    func categorise(folders: [URL]) {
+        guard let tool = Self.locate() else {
+            state = .failed(missingToolMessage)
+            return
+        }
+        guard !folders.isEmpty else { return }
+        run(
+            tool: tool,
+            arguments: ["categorise"] + folders.map { $0.path(percentEncoded: false) },
+            label: folders.count == 1
+                ? "Categorising 1 meeting" : "Categorising \(folders.count) meetings"
+        )
+    }
+
+    /// Start or stop an OBS recording via the CLI, which already speaks
+    /// obs-websocket.
+    func controlRecording(start: Bool) {
+        guard let tool = Self.locate() else {
+            state = .failed(missingToolMessage)
+            return
+        }
+        run(
+            tool: tool,
+            arguments: ["record", start ? "start" : "stop"],
+            label: start ? "Starting recording" : "Stopping recording"
+        )
+    }
+
+    private var missingToolMessage: String {
+        "The transcribe command line tool was not found. Install it with "
+            + "'brew install calebsargeant/tap/transcribe'."
     }
 
     private func run(tool: URL, arguments: [String], label: String) {

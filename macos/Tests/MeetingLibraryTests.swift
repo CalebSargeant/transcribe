@@ -569,3 +569,195 @@ struct TagTests {
         #expect(TagIndex.normalise(input) == expected)
     }
 }
+
+@Suite("Search index")
+struct IndexTests {
+    private func meeting(
+        title: String = "T", lines: [String] = [], actions: [IndexedMeeting.Action] = []
+    ) -> IndexedMeeting {
+        let indexedLines = lines.enumerated().map { offset, text in
+            IndexedMeeting.Line(
+                seconds: Double(offset * 10),
+                timestamp: Timecode.text(from: Double(offset * 10)),
+                speaker: "Speaker 1", text: text)
+        }
+        return IndexedMeeting(
+            folder: URL(filePath: "/tmp/\(title)"), name: title, title: title, date: nil,
+            isLegacy: false,
+            haystack: ([title] + lines).joined(separator: "\n").lowercased(),
+            lines: indexedLines, actions: actions)
+    }
+
+    @Test("matching is case insensitive and returns the line")
+    func matching() {
+        let m = meeting(lines: ["We agreed the Gitflow branching strategy", "Unrelated chatter"])
+        let hits = m.matches("gitflow")
+        #expect(hits.count == 1)
+        #expect(hits[0].text.contains("Gitflow"))
+        #expect(hits[0].timestamp == "00:00:00")
+    }
+
+    /// A meeting whose transcript is long must not return hundreds of lines
+    /// into a results list nobody will scroll.
+    @Test("matches are capped")
+    func capped() {
+        let m = meeting(lines: Array(repeating: "kubernetes again", count: 50))
+        #expect(m.matches("kubernetes").count == 6)
+        #expect(m.matches("kubernetes", limit: 2).count == 2)
+    }
+
+    @Test("an empty query matches nothing")
+    func emptyQuery() {
+        #expect(meeting(lines: ["anything"]).matches("").isEmpty)
+    }
+
+    @Test("'Unassigned' is not an owner")
+    func unassignedAction() {
+        let owned = IndexedMeeting.Action(owner: "Arno", title: "t", detail: "d")
+        let unowned = IndexedMeeting.Action(owner: "Unassigned", title: "t", detail: "d")
+        #expect(owned.assignedOwner == "Arno")
+        #expect(unowned.assignedOwner == nil)
+    }
+
+    /// The cache is only useful if it survives a round trip intact.
+    @Test("an indexed meeting round trips through the cache format")
+    func codable() throws {
+        let original = meeting(
+            title: "Branching", lines: ["one", "two"],
+            actions: [IndexedMeeting.Action(owner: "Arno", title: "Do it", detail: "now")])
+        let data = try JSONEncoder().encode([original])
+        let restored = try JSONDecoder().decode([IndexedMeeting].self, from: data)
+        #expect(restored.count == 1)
+        #expect(restored[0].title == "Branching")
+        #expect(restored[0].lines.count == 2)
+        #expect(restored[0].actions.first?.owner == "Arno")
+    }
+}
+
+@Suite("Action completion")
+struct CompletionTests {
+    /// Identity has to include the meeting: two meetings can both produce
+    /// "Update the docs" and ticking one must not tick the other.
+    @Test("the key distinguishes the same action in different meetings")
+    func keyIncludesMeeting() {
+        let action = IndexedMeeting.Action(owner: "Arno", title: "Update docs", detail: "")
+        let a = Completions.key(meeting: URL(filePath: "/m/one"), action: action)
+        let b = Completions.key(meeting: URL(filePath: "/m/two"), action: action)
+        #expect(a != b)
+    }
+
+    @Test("the same action in the same meeting is one key")
+    func stableKey() {
+        let meeting = URL(filePath: "/m/one")
+        let first = IndexedMeeting.Action(owner: "Arno", title: "Update docs", detail: "x")
+        let second = IndexedMeeting.Action(owner: "Arno", title: "Update docs", detail: "x")
+        #expect(Completions.key(meeting: meeting, action: first)
+            == Completions.key(meeting: meeting, action: second))
+    }
+}
+
+@Suite("Watch queue")
+struct WatchQueueTests {
+    private func makeTree(_ build: (URL, URL) throws -> Void) rethrows -> (watch: URL, meetings: URL, root: URL) {
+        let root = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "transcribe-queue-\(UUID().uuidString)")
+        let watch = root.appending(path: "Movies")
+        let meetings = root.appending(path: "Meetings")
+        for url in [watch, meetings] {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try build(watch, meetings)
+        return (watch, meetings, root)
+    }
+
+    private func meetingFolder(_ meetings: URL, named: String, source: String) throws -> URL {
+        let folder = meetings.appending(path: named)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let json = #"{"index":1,"start":0,"end":1,"duration_seconds":1,"attendees":[],"speakers":[],"segments":[],"source_file":"\#(source)"}"#
+        try Data(json.utf8).write(to: folder.appending(path: "notes.json"))
+        return folder
+    }
+
+    @Test("a recording with no meeting is pending")
+    func pendingRecording() throws {
+        let tree = try makeTree { watch, _ in
+            try Data("x".utf8).write(to: watch.appending(path: "a.mov"))
+        }
+        defer { try? FileManager.default.removeItem(at: tree.root) }
+        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: [])
+        #expect(found.count == 1)
+        #expect(!found[0].isProcessed)
+    }
+
+    /// The pipeline renames a meeting after what was said in it, so matching on
+    /// the folder name would never work. source_file is the link.
+    @Test("a recording is matched to its meeting by source_file")
+    func matchedBySourceFile() throws {
+        var meetingURL: URL!
+        let tree = try makeTree { watch, meetings in
+            let recording = watch.appending(path: "2026-08-27 110555.mov")
+            try Data("x".utf8).write(to: recording)
+            meetingURL = try meetingFolder(
+                meetings, named: "2026-08-27 1105 Something Entirely Different",
+                source: recording.path(percentEncoded: false))
+        }
+        defer { try? FileManager.default.removeItem(at: tree.root) }
+        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: [meetingURL])
+        #expect(found.count == 1)
+        #expect(found[0].isProcessed)
+        #expect(found[0].processedInto == [meetingURL])
+    }
+
+    @Test("non-media files are ignored")
+    func ignoresOtherFiles() throws {
+        let tree = try makeTree { watch, _ in
+            try Data("x".utf8).write(to: watch.appending(path: "notes.txt"))
+            try Data("x".utf8).write(to: watch.appending(path: "a.mp4"))
+        }
+        defer { try? FileManager.default.removeItem(at: tree.root) }
+        #expect(WatchQueue.scan(watch: tree.watch, meetingFolders: []).count == 1)
+    }
+
+    @Test("a missing watch folder yields nothing")
+    func missingWatch() {
+        #expect(WatchQueue.scan(watch: URL(filePath: "/nonexistent"), meetingFolders: []).isEmpty)
+    }
+}
+
+@Suite("Meeting detection")
+struct PresenceTests {
+    /// Virtual inputs report as running whenever their host app is open, so
+    /// they say nothing about whether a meeting is happening.
+    @Test(
+        arguments: [
+            "BlackHole 2ch", "ZoomAudioDevice", "Krisp Microphone", "Loopback Audio",
+            "Steam Streaming Microphone", "Background Music",
+        ])
+    func virtualInputsIgnored(name: String) {
+        #expect(Presence.isIgnored(name, in: Presence.ignoredDevices))
+    }
+
+    @Test(arguments: ["MacBook Pro Microphone", "SB725 Dell Pro Premium Soundbar"])
+    func realInputsKept(name: String) {
+        #expect(!Presence.isIgnored(name, in: Presence.ignoredDevices))
+    }
+
+    @Test(arguments: ["OBS Virtual Camera", "Capture screen 0", "Caleb's iPhone Desk View Camera"])
+    func virtualCamerasIgnored(name: String) {
+        #expect(Presence.isIgnored(name, in: Presence.ignoredCameras))
+    }
+
+    @Test(arguments: ["Logitech BRIO", "FaceTime HD Camera"])
+    func realCamerasKept(name: String) {
+        #expect(!Presence.isIgnored(name, in: Presence.ignoredCameras))
+    }
+
+    @Test("the signals read back as text")
+    func describe() {
+        var state = Presence.State()
+        #expect(state.describe.contains("mic off"))
+        state.microphone = true
+        state.microphoneNames = ["MacBook Pro Microphone"]
+        #expect(state.describe.contains("MacBook Pro Microphone"))
+    }
+}

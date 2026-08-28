@@ -157,6 +157,14 @@ def test_prompt_respects_the_token_budget(tmp_path):
     assert 0 < len(prompt.split(", ")) < 40
 
 
+def test_prompt_does_not_read_the_real_glossary_in_tests(tmp_path):
+    """Guards the isolation the other tests rely on."""
+    prompt = build_prompt(
+        {"destination_directory": str(tmp_path)}, [], glossary_path=tmp_path / "nope.json"
+    )
+    assert prompt == ""
+
+
 def test_auto_prompt_can_be_disabled(tmp_path):
     config = {
         "whisper_auto_prompt": False,
@@ -167,4 +175,6 @@ def test_auto_prompt_can_be_disabled(tmp_path):
 
 
 def test_prompt_with_nothing_configured_is_empty(tmp_path):
-    assert build_prompt({"destination_directory": str(tmp_path)}, []) == ""
+    # An explicit glossary path keeps the test off the real one in ~/.transcribe.
+    config = {"destination_directory": str(tmp_path)}
+    assert build_prompt(config, [], glossary_path=tmp_path / "empty.json") == ""

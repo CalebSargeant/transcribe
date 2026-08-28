@@ -322,11 +322,14 @@ def process_recording(video_file, config=None, write_json=False):
             if config.get("diarization_enabled", True):
                 print("  Identifying speakers...")
                 known = meeting.attendees or config.get("known_participants") or []
-                # The invite list is a roster, not a count: 11 people invited to
-                # a meeting where 6 speak is normal, and forcing 11 clusters
-                # would manufacture five speakers out of noise. Attendees are
-                # used for naming; the count is left to the clustering threshold.
-                if diarize_meeting(meeting, audio_path, config):
+                # The attendee count is used as the cluster count. It reads like
+                # an overestimate -- 11 invited where 8 speak -- but measured on
+                # a 53-minute meeting it is the only thing that works: voice
+                # embeddings drift over that length, so unconstrained clustering
+                # split the room into 17 speakers and raising the threshold to
+                # 0.95 only got it to 15. Pinning to 11 gave 8, and the silent
+                # invitees fall out as micro-clusters on their own.
+                if diarize_meeting(meeting, audio_path, config, num_speakers=len(known) or None):
                     print(f"  ✓ Separated {len(meeting.speakers())} voice(s)")
                     named = resolve_speaker_names(meeting, config, known)
                     if named:

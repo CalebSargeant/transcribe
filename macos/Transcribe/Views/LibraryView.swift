@@ -64,6 +64,28 @@ struct LibraryView: View {
             } actions: {
                 Button("Choose Folder…") { chooseFolder() }
             }
+        case .needsAccess(let url):
+            // Choosing the folder in an open panel is what grants access, so
+            // the button is the fix rather than a retry.
+            ContentUnavailableView {
+                Label("Cannot read that folder", systemImage: "lock")
+            } description: {
+                Text(
+                    "\(url.path(percentEncoded: false))\n\nmacOS is blocking this app from "
+                    + "reading it. Choosing the folder below grants access. Granting Transcribe "
+                    + "Full Disk Access in System Settings > Privacy & Security also works."
+                )
+            } actions: {
+                Button("Choose Folder…") { chooseFolder() }
+                Button("Open Privacy Settings") {
+                    if let settings = URL(
+                        string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+                    ) {
+                        NSWorkspace.shared.open(settings)
+                    }
+                }
+            }
         case .loaded:
             VStack(spacing: 0) {
                 List(selection: $selection) {

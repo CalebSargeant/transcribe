@@ -162,7 +162,7 @@ final class MeetingLibrary {
                 media: files
                     .filter { mediaExtensions.contains($0.pathExtension.lowercased()) }
                     // Prefer video over the extracted audio sitting beside it.
-                    .sorted { lhs, _ in lhs.pathExtension.lowercased() != "wav" }
+                    .sorted { ($0.pathExtension.lowercased() == "wav" ? 1 : 0) < ($1.pathExtension.lowercased() == "wav" ? 1 : 0) }
                     .first
             )
         }

@@ -761,3 +761,37 @@ struct PresenceTests {
         #expect(state.describe.contains("MacBook Pro Microphone"))
     }
 }
+
+@Suite("Finding the recording")
+struct MediaFallbackTests {
+    private func record(start: Double, source: String) throws -> MeetingRecord {
+        let json = """
+            {"index":1,"start":\(start),"end":9999,"duration_seconds":100,"attendees":[],
+             "speakers":[],"segments":[],"source_file":"\(source)"}
+            """
+        return try PipelineDate.decoder().decode(MeetingRecord.self, from: Data(json.utf8))
+    }
+
+    /// When the recording is played from where it was left rather than from a
+    /// clip, the timestamps already line up.
+    @Test("playing the original source needs no offset")
+    func originalNeedsNoOffset() throws {
+        let meeting = try record(start: 2.37, source: "/Movies/original.mp4")
+        #expect(meeting.clipOffset(forMedia: URL(filePath: "/Movies/original.mp4")) == 0)
+    }
+
+    @Test("a clip is still offset by the meeting start")
+    func clipStillOffset() throws {
+        let meeting = try record(start: 8511.65, source: "/Movies/long.mov")
+        let clip = URL(filePath: "/Meetings/x/2026-08-25 1156 Janeway hosting.mov")
+        #expect(meeting.clipOffset(forMedia: clip) == 8511.65)
+    }
+
+    @Test("a record with no source file falls back to the meeting start")
+    func noSourceFile() throws {
+        let json = #"{"index":1,"start":12,"end":99,"duration_seconds":1,"attendees":[],"speakers":[],"segments":[]}"#
+        let meeting = try PipelineDate.decoder().decode(MeetingRecord.self, from: Data(json.utf8))
+        #expect(meeting.sourceFile == nil)
+        #expect(meeting.clipOffset(forMedia: URL(filePath: "/x/a.mov")) == 12)
+    }
+}

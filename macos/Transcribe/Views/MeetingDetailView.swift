@@ -37,7 +37,7 @@ struct MeetingDetailView: View {
         .navigationTitle(record?.displayTitle ?? folder.displayName)
         .navigationSubtitle(subtitle)
         .toolbar {
-            if contents?.media != nil {
+            if playableMedia != nil {
                 ToolbarItem {
                     Toggle(isOn: $showPlayer) {
                         Label("Player", systemImage: "play.rectangle")
@@ -57,7 +57,7 @@ struct MeetingDetailView: View {
                 Button {
                     pipeline.regenerate(
                         folder: folder,
-                        media: contents?.media,
+                        media: playableMedia,
                         label: record == nil ? "Generating notes" : "Regenerating notes"
                     )
                 } label: {
@@ -66,9 +66,9 @@ struct MeetingDetailView: View {
                         systemImage: "sparkles"
                     )
                 }
-                .disabled(contents?.media == nil || pipeline.isRunning)
+                .disabled(playableMedia == nil || pipeline.isRunning)
                 .help(
-                    contents?.media == nil
+                    playableMedia == nil
                         ? "There is no recording in this folder to process"
                         : "Run the pipeline over this recording again"
                 )
@@ -77,6 +77,25 @@ struct MeetingDetailView: View {
         .task {
             await load()
         }
+    }
+
+    /// The recording to play.
+    ///
+    /// Usually the file in the meeting folder. When `move_source_video` is off,
+    /// or the recording already lived inside the destination, the pipeline
+    /// leaves it where it was and the folder holds only notes -- but
+    /// `source_file` still records where it went, so the video is findable
+    /// rather than simply absent.
+    private var playableMedia: URL? {
+        if let media = contents?.media { return media }
+        guard let source = record?.sourceFile else { return nil }
+        let url = URL(filePath: source)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// True when the recording is not in this meeting's own folder.
+    private var mediaIsElsewhere: Bool {
+        contents?.media == nil && playableMedia != nil
     }
 
     private var subtitle: String {
@@ -95,9 +114,24 @@ struct MeetingDetailView: View {
     @ViewBuilder
     private var content: some View {
         VSplitView {
-            if showPlayer, contents?.media != nil {
-                PlayerPane(playback: playback, media: contents?.media)
-                    .frame(minHeight: 200, idealHeight: 320)
+            if showPlayer, let media = playableMedia {
+                VStack(spacing: 0) {
+                    PlayerPane(playback: playback, media: media)
+                    if mediaIsElsewhere {
+                        HStack(spacing: 6) {
+                            Image(systemName: "info.circle").foregroundStyle(.secondary)
+                            Text("Playing the original recording, which is not in this folder.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Show in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([media])
+                            }
+                            .buttonStyle(.link).font(.caption)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 4)
+                    }
+                }
+                .frame(minHeight: 200, idealHeight: 320)
             }
 
             VStack(spacing: 0) {
@@ -142,7 +176,7 @@ struct MeetingDetailView: View {
         showPlayer = true
         playback.seek(
             toRecordingSecond: second,
-            meetingStart: record?.clipOffset(forMedia: contents?.media) ?? 0
+            meetingStart: record?.clipOffset(forMedia: playableMedia) ?? 0
         )
     }
 
@@ -168,7 +202,8 @@ struct MeetingDetailView: View {
             legacySummary = await MeetingLibrary.loadText(contents.summaryText)
         }
 
-        await playback.open(contents.media)
+        // Resolved after the record is read, since the fallback comes from it.
+        await playback.open(playableMedia)
 
         // Only now is there a player to seek.
         if let seekOnOpen {

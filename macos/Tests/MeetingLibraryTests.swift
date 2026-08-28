@@ -465,3 +465,107 @@ struct ConfigWriteTests {
         #expect(config.url("missing") == nil)
     }
 }
+
+@Suite("Config lists")
+struct ConfigListTests {
+    @Test("a block sequence is read")
+    func readsSequence() {
+        let yaml = """
+            known_participants:
+              - Arno Bakker
+              - Caleb Sargeant
+            llm_provider: claude
+            """
+        #expect(Configuration.sequences(in: yaml)["known_participants"] == ["Arno Bakker", "Caleb Sargeant"])
+        // A sequence is not also a scalar; treating it as one wrote it back flattened.
+        #expect(Configuration.scalars(in: yaml)["known_participants"] == nil)
+        #expect(Configuration.scalars(in: yaml)["llm_provider"] == "claude")
+    }
+
+    @Test("a sequence is replaced whole")
+    func replacesSequence() {
+        let yaml = """
+            known_participants:
+              - Old One
+              - Old Two
+            llm_provider: claude
+            """
+        let updated = Configuration.applyList("known_participants", ["New"], to: yaml)
+        #expect(Configuration.sequences(in: updated)["known_participants"] == ["New"])
+        #expect(!updated.contains("Old One"))
+        #expect(Configuration.scalars(in: updated)["llm_provider"] == "claude")
+    }
+
+    @Test("an empty list is written as an empty sequence, not dropped")
+    func emptyList() {
+        let updated = Configuration.applyList("known_participants", [], to: "known_participants:\n  - A")
+        #expect(updated.contains("known_participants: []"))
+        #expect(!updated.contains("- A"))
+    }
+
+    @Test("a list is appended when the key is absent")
+    func appendsList() {
+        let updated = Configuration.applyList("known_participants", ["Arno"], to: "llm_provider: claude")
+        #expect(Configuration.sequences(in: updated)["known_participants"] == ["Arno"])
+        #expect(Configuration.scalars(in: updated)["llm_provider"] == "claude")
+    }
+
+    @Test("list items needing quotes round trip")
+    func quotedItems() {
+        let items = ["Plain Name", "Name: with colon", "with #hash"]
+        let updated = Configuration.applyList("known_participants", items, to: "")
+        #expect(Configuration.sequences(in: updated)["known_participants"] == items)
+    }
+
+    /// A scalar key replaced by a list must not leave the old value behind.
+    @Test("replacing a scalar with a list")
+    func scalarToList() {
+        let updated = Configuration.applyList("known_participants", ["Arno"], to: "known_participants: ''\nkeep: me")
+        #expect(Configuration.sequences(in: updated)["known_participants"] == ["Arno"])
+        #expect(Configuration.scalars(in: updated)["keep"] == "me")
+    }
+}
+
+@Suite("Meeting categories")
+struct TagTests {
+    private func temporaryFolder() -> URL {
+        let url = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "transcribe-tags-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test("tags round trip through the folder")
+    func roundTrip() throws {
+        let folder = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Tags(names: ["Client", "1:1"]).save(in: folder)
+        #expect(Tags.load(in: folder).names == ["Client", "1:1"])
+    }
+
+    /// An empty tag file is clutter in a folder the user browses in Finder.
+    @Test("clearing every tag removes the file")
+    func removesEmptyFile() throws {
+        let folder = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Tags(names: ["Client"]).save(in: folder)
+        try Tags(names: []).save(in: folder)
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: Tags.filename).path))
+    }
+
+    @Test("a folder with no tag file has no tags")
+    func missingFile() {
+        #expect(Tags.load(in: URL(filePath: "/nonexistent")).names.isEmpty)
+    }
+
+    @Test(
+        "duplicates differing only in case are one tag",
+        arguments: [
+            (["Client", "client"], ["Client"]),
+            (["  Spaced  ", "Spaced"], ["Spaced"]),
+            (["a", "", "  ", "b"], ["a", "b"]),
+        ])
+    func normalisation(input: [String], expected: [String]) {
+        #expect(TagIndex.normalise(input) == expected)
+    }
+}

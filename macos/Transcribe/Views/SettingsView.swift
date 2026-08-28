@@ -63,13 +63,26 @@ private struct GeneralSettings: View {
                 .help("How far either side of a recording to look for an event.")
             }
 
-            Section("Notifications") {
+            Section("Slack") {
+                SecureField(
+                    "Bot token",
+                    text: settings.text(ConfigKey.slackBotToken),
+                    prompt: Text("xoxb-…")
+                )
+                .help("A bot token posts threaded notes and can upload files. Preferred.")
                 TextField(
-                    "Slack webhook",
+                    "Channel ID",
+                    text: settings.text(ConfigKey.slackChannel),
+                    prompt: Text("C01234ABCDE")
+                )
+                .help("Right-click the channel in Slack, View channel details, copy the ID at the bottom.")
+                TextField(
+                    "Webhook (fallback)",
                     text: settings.text(ConfigKey.slackWebhook),
                     prompt: Text("https://hooks.slack.com/…")
                 )
-                Text("Leave empty to skip posting notes to Slack.")
+                .help("Only used when no bot token is set. Posts a plain message.")
+                Text("A bot token and channel are used in preference to the webhook. Leave all three empty to skip Slack.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -99,17 +112,32 @@ private struct FolderRow: View {
     let key: String
 
     var body: some View {
-        LabeledContent(title) {
-            HStack(spacing: 8) {
-                Text(settings.folder(key)?.path(percentEncoded: false) ?? "Not set")
-                    .truncationMode(.head)
-                    .lineLimit(1)
-                    .foregroundStyle(settings.folder(key) == nil ? .secondary : .primary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                Button("Choose…") { choose() }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).fontWeight(.medium)
+                Spacer()
+                Button("Change…") { choose() }
+                    .help("Pick a different \(title.lowercased()) folder")
+                Button {
+                    if let url = settings.folder(key) {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .disabled(settings.folder(key) == nil)
+                .help("Open this folder in Finder")
             }
+            Text(settings.folder(key)?.path(percentEncoded: false) ?? "Not set")
+                .font(.callout)
+                .foregroundStyle(settings.folder(key) == nil ? .secondary : .primary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(help).font(.caption).foregroundStyle(.secondary)
         }
-        .help(help)
+        .padding(.vertical, 2)
     }
 
     private func choose() {
@@ -218,6 +246,14 @@ private struct TranscriptionSettings: View {
 
             Section("Speakers") {
                 Toggle("Separate speakers", isOn: settings.flag(ConfigKey.diarization, default: true))
+                LabeledContent("Threads") {
+                    Stepper(
+                        "\(settings.config.int(ConfigKey.diarizationThreads, default: 8))",
+                        value: settings.number(ConfigKey.diarizationThreads, default: 8),
+                        in: 1...32
+                    )
+                }
+                .disabled(!settings.config.bool(ConfigKey.diarization, default: true))
                 LabeledContent("Merge voices at") {
                     Slider(
                         value: settings.decimal(ConfigKey.diarizationThreshold, default: 0.8),
@@ -238,6 +274,25 @@ private struct TranscriptionSettings: View {
                     )
                 )
                 .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Vocabulary") {
+                TextField(
+                    "Always prime Whisper with",
+                    text: settings.text(ConfigKey.whisperPrompt),
+                    prompt: Text("Terraform, Kubernetes, MikroTik, BGP")
+                )
+                .help("Terms added to every transcription on top of what is learned automatically.")
+                Text("Improves proper nouns and jargon. Capped at 224 tokens, so the learned terms are dropped first if this is long.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("People") {
+                TokenList(
+                    key: ConfigKey.knownParticipants,
+                    prompt: "Add a name",
+                    help: "Names that recur in your meetings. Used to put names to voices when no calendar attendee list is available."
+                )
             }
 
             Section("Source files") {

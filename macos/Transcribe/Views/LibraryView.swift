@@ -3,9 +3,11 @@ import SwiftUI
 /// The main window: meetings down the left, the selected one on the right.
 struct LibraryView: View {
     @Environment(Settings.self) private var settings
+    @Environment(TagIndex.self) private var tags
     @State private var library = MeetingLibrary()
     @State private var selection: MeetingFolder?
     @State private var search = ""
+    @State private var tagFilter: String?
 
     var body: some View {
         NavigationSplitView {
@@ -28,25 +30,54 @@ struct LibraryView: View {
         .searchable(text: $search, placement: .sidebar, prompt: "Search meetings")
         .toolbar {
             ToolbarItem {
-                Button {
-                    chooseFolder()
+                Menu {
+                    Button("All meetings") { tagFilter = nil }
+                    if !tags.allTags.isEmpty {
+                        Divider()
+                        ForEach(tags.allTags, id: \.self) { tag in
+                            Button {
+                                tagFilter = tag
+                            } label: {
+                                if tagFilter == tag {
+                                    Label(tag, systemImage: "checkmark")
+                                } else {
+                                    Text(tag)
+                                }
+                            }
+                        }
+                    }
                 } label: {
-                    Label("Choose Folder", systemImage: "folder")
+                    Label(
+                        tagFilter ?? "All categories",
+                        systemImage: tagFilter == nil ? "tag" : "tag.fill"
+                    )
                 }
-                .help("Pick the folder your meetings are saved to")
+                .help("Show only meetings in one category")
             }
             ToolbarItem {
                 Button {
-                    Task { await library.load(root: settings.folder(ConfigKey.destination)) }
+                    chooseFolder()
+                } label: {
+                    Label("Change Meetings Folder", systemImage: "folder.badge.gearshape")
+                }
+                .help("Change which folder this app lists meetings from")
+            }
+            ToolbarItem {
+                Button {
+                    Task {
+                        await library.load(root: settings.folder(ConfigKey.destination))
+                        await tags.load(folders: library.folders)
+                    }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .help("Rescan the meetings folder")
+                .help("Rescan the meetings folder for new or changed meetings")
             }
         }
         .task(id: settings.folder(ConfigKey.destination)) {
             // Reloads on its own when the folder is changed in Settings.
             await library.load(root: settings.folder(ConfigKey.destination))
+            await tags.load(folders: library.folders)
         }
     }
 
@@ -118,9 +149,16 @@ struct LibraryView: View {
 
     private var filtered: [MeetingFolder] {
         let query = search.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return library.folders }
-        return library.folders.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
+        return library.folders.filter { folder in
+            if let tagFilter,
+                !tags.tags(for: folder.id).contains(where: {
+                    $0.caseInsensitiveCompare(tagFilter) == .orderedSame
+                })
+            { return false }
+            if !query.isEmpty, !folder.name.localizedCaseInsensitiveContains(query) {
+                return false
+            }
+            return true
         }
     }
 
@@ -158,6 +196,7 @@ struct LibraryView: View {
 }
 
 private struct MeetingRow: View {
+    @Environment(TagIndex.self) private var tags
     let folder: MeetingFolder
 
     var body: some View {
@@ -175,6 +214,17 @@ private struct MeetingRow: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(.quaternary, in: Capsule())
+                        .help(
+                            "Saved before this pipeline wrote structured notes. "
+                                + "The transcript and summary are here; speakers, timestamps "
+                                + "and notes are not. Generate Notes rebuilds them."
+                        )
+                }
+                ForEach(tags.tags(for: folder.id).prefix(2), id: \.self) { tag in
+                    Text(tag)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.tint.opacity(0.15), in: Capsule())
                 }
             }
             .font(.caption)
@@ -187,4 +237,6 @@ private struct MeetingRow: View {
 #Preview {
     LibraryView()
         .environment(Settings(config: Configuration(values: [:])))
+        .environment(TagIndex())
+        .environment(Pipeline())
 }

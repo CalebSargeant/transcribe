@@ -9,11 +9,14 @@
 /* Begin PBXBuildFile section */
 		06E69E32E12F97685AEDB282 /* MeetingLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE0890EC4EC4F1F56D29D18 /* MeetingLibraryTests.swift */; };
 		1C6D3B0721AFE81E66890DEB /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8393E11D5017B8A9BEE10728 /* Settings.swift */; };
+		2853A8E6562B378E7078A664 /* Tags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD9A32861188F46B34DF858 /* Tags.swift */; };
 		34F32004E059BA16037A5A07 /* VideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93AC6BA843A20A1824BF1A27 /* VideoPlayerView.swift */; };
+		463DDDC1A9D40FCCB941F41A /* Pipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = C69FE479031752DA98A2A9CF /* Pipeline.swift */; };
 		4C7200D35101E648E1869301 /* TranscribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3728B9017E90AE95A990BF04 /* TranscribeApp.swift */; };
 		4E5E02CAC0060658543AD377 /* MeetingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10CF491F820F6130C5AE790 /* MeetingLibrary.swift */; };
 		6332DE802A0613EECB7992DB /* NotesPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B022E6B0A1FB6275B7C3521E /* NotesPane.swift */; };
 		66544E4288BFEA8DF45852B4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08ED3829ED994D9075378C23 /* SettingsView.swift */; };
+		6C579154A1D97F73DE5DA9C5 /* TokenList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A2EC20737E1BB609C5953C /* TokenList.swift */; };
 		6EDCAB51D6BB8523EF4A3818 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FE7BA7FD38024E5F83ADF50 /* Meeting.swift */; };
 		7C09ADAA9181F327364801EA /* Configuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2FD6196D6E0CB8BBB037D3E /* Configuration.swift */; };
 		D5856F4A20F178A8EAB490C0 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BBB12CCF31280211A4473B3 /* LibraryView.swift */; };
@@ -39,9 +42,11 @@
 		08ED3829ED994D9075378C23 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		0BBB12CCF31280211A4473B3 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		1ACC722A6349F4EA59287B7A /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
+		36A2EC20737E1BB609C5953C /* TokenList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenList.swift; sourceTree = "<group>"; };
 		3728B9017E90AE95A990BF04 /* TranscribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscribeApp.swift; sourceTree = "<group>"; };
 		3D5D1F6F0BA4814D510824ED /* Transcribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Transcribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE0890EC4EC4F1F56D29D18 /* MeetingLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLibraryTests.swift; sourceTree = "<group>"; };
+		6DD9A32861188F46B34DF858 /* Tags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tags.swift; sourceTree = "<group>"; };
 		7FE7BA7FD38024E5F83ADF50 /* Meeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Meeting.swift; sourceTree = "<group>"; };
 		8393E11D5017B8A9BEE10728 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		88C08D62FE4A43D7EC6B1D0D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -49,6 +54,7 @@
 		A634408654575E8D9B860F63 /* TranscriptPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptPane.swift; sourceTree = "<group>"; };
 		B022E6B0A1FB6275B7C3521E /* NotesPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesPane.swift; sourceTree = "<group>"; };
 		B10CF491F820F6130C5AE790 /* MeetingLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLibrary.swift; sourceTree = "<group>"; };
+		C69FE479031752DA98A2A9CF /* Pipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pipeline.swift; sourceTree = "<group>"; };
 		DF6CD6CD61472021ECE6A4B5 /* MeetingDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingDetailView.swift; sourceTree = "<group>"; };
 		E2FD6196D6E0CB8BBB037D3E /* Configuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Configuration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -61,6 +67,7 @@
 				DF6CD6CD61472021ECE6A4B5 /* MeetingDetailView.swift */,
 				B022E6B0A1FB6275B7C3521E /* NotesPane.swift */,
 				08ED3829ED994D9075378C23 /* SettingsView.swift */,
+				36A2EC20737E1BB609C5953C /* TokenList.swift */,
 				A634408654575E8D9B860F63 /* TranscriptPane.swift */,
 				93AC6BA843A20A1824BF1A27 /* VideoPlayerView.swift */,
 			);
@@ -80,6 +87,7 @@
 			isa = PBXGroup;
 			children = (
 				E2FD6196D6E0CB8BBB037D3E /* Configuration.swift */,
+				C69FE479031752DA98A2A9CF /* Pipeline.swift */,
 				1ACC722A6349F4EA59287B7A /* PlaybackController.swift */,
 				8393E11D5017B8A9BEE10728 /* Settings.swift */,
 			);
@@ -91,6 +99,7 @@
 			children = (
 				7FE7BA7FD38024E5F83ADF50 /* Meeting.swift */,
 				B10CF491F820F6130C5AE790 /* MeetingLibrary.swift */,
+				6DD9A32861188F46B34DF858 /* Tags.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -241,9 +250,12 @@
 				EDCDECCF1186A30FBBA70C0C /* MeetingDetailView.swift in Sources */,
 				4E5E02CAC0060658543AD377 /* MeetingLibrary.swift in Sources */,
 				6332DE802A0613EECB7992DB /* NotesPane.swift in Sources */,
+				463DDDC1A9D40FCCB941F41A /* Pipeline.swift in Sources */,
 				E3217A07BE9EF1C70C15EAD5 /* PlaybackController.swift in Sources */,
 				1C6D3B0721AFE81E66890DEB /* Settings.swift in Sources */,
 				66544E4288BFEA8DF45852B4 /* SettingsView.swift in Sources */,
+				2853A8E6562B378E7078A664 /* Tags.swift in Sources */,
+				6C579154A1D97F73DE5DA9C5 /* TokenList.swift in Sources */,
 				4C7200D35101E648E1869301 /* TranscribeApp.swift in Sources */,
 				EA1EAFCAFA7DA97D592556BF /* TranscriptPane.swift in Sources */,
 				34F32004E059BA16037A5A07 /* VideoPlayerView.swift in Sources */,

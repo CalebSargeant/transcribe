@@ -12,6 +12,9 @@ import Foundation
 /// cannot be corrupted by it.
 struct Configuration: Sendable, Equatable {
     var values: [String: String]
+    /// Block sequences, kept apart from scalars so a list is never flattened
+    /// into a string and written back as one.
+    var lists: [String: [String]] = [:]
 
     static let path = FileManager.default
         .homeDirectoryForCurrentUser
@@ -23,7 +26,7 @@ struct Configuration: Sendable, Equatable {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             return Configuration(values: [:])
         }
-        return Configuration(values: scalars(in: text))
+        return Configuration(values: scalars(in: text), lists: sequences(in: text))
     }
 
     func string(_ key: String, default fallback: String = "") -> String {
@@ -46,6 +49,11 @@ struct Configuration: Sendable, Equatable {
     func url(_ key: String) -> URL? {
         guard let raw = values[key], !raw.isEmpty else { return nil }
         return URL(filePath: raw)
+    }
+
+    /// A block-sequence value, as `known_participants` is written.
+    func list(_ key: String) -> [String] {
+        lists[key] ?? []
     }
 
     /// Convenience for the two settings the app itself depends on.
@@ -247,6 +255,88 @@ struct Configuration: Sendable, Equatable {
         }
         value = value.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
+    }
+
+    /// Block sequences: a bare `key:` followed by indented `- item` lines.
+    static func sequences(in text: String) -> [String: [String]] {
+        var found: [String: [String]] = [:]
+        let lines = text.components(separatedBy: "\n")
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            index += 1
+            guard
+                let key = topLevelKey(in: line),
+                line.drop(while: { $0 != ":" }).dropFirst()
+                    .trimmingCharacters(in: .whitespaces).isEmpty
+            else { continue }
+
+            var items: [String] = []
+            while index < lines.count {
+                let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                guard lines[index].first == " " || lines[index].first == "\t",
+                    candidate.hasPrefix("- ")
+                else { break }
+                if let item = unwrap(String(candidate.dropFirst(2))) { items.append(item) }
+                index += 1
+            }
+            if !items.isEmpty { found[key] = items }
+        }
+        return found
+    }
+
+    /// Replace a block sequence, or write one where the key is a bare scalar.
+    static func applyList(_ key: String, _ items: [String], to text: String) -> String {
+        var output: [String] = []
+        let lines = text.isEmpty ? [] : text.components(separatedBy: "\n")
+        var index = 0
+        var written = false
+
+        func rendered() -> [String] {
+            items.isEmpty ? ["\(key): []"] : ["\(key):"] + items.map { "  - \(quoted($0))" }
+        }
+
+        while index < lines.count {
+            let line = lines[index]
+            index += 1
+            guard topLevelKey(in: line) == key else {
+                output.append(line)
+                continue
+            }
+            output.append(contentsOf: rendered())
+            written = true
+            // Drop whatever the old value was, scalar or sequence.
+            while index < lines.count {
+                let next = lines[index]
+                guard next.first == " " || next.first == "\t", !next.trimmingCharacters(in: .whitespaces).isEmpty
+                else { break }
+                index += 1
+            }
+        }
+
+        if !written {
+            if output.last?.trimmingCharacters(in: .whitespaces).isEmpty == false { output.append("") }
+            output.append(contentsOf: rendered())
+            output.append("")
+        }
+        return output.joined(separator: "\n")
+    }
+
+    /// Write a list through to the file.
+    static func writeList(_ key: String, _ items: [String], to url: URL = path) throws {
+        let manager = FileManager.default
+        try manager.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let temporary = url.deletingLastPathComponent()
+            .appending(path: ".config.yaml.\(UUID().uuidString)")
+        try Data(applyList(key, items, to: existing).utf8).write(to: temporary, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+        _ = try manager.replaceItemAt(url, withItemAt: temporary)
     }
 
     /// An indented line that is neither a nested key nor a list item, so the

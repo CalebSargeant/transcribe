@@ -5,6 +5,8 @@ struct MeetingDetailView: View {
     let folder: MeetingFolder
     let library: MeetingLibrary
 
+    @Environment(TagIndex.self) private var tags
+    @Environment(Pipeline.self) private var pipeline
     @State private var contents: MeetingFolder.Contents?
     @State private var record: MeetingRecord?
     @State private var legacyTranscript: String?
@@ -44,9 +46,29 @@ struct MeetingDetailView: View {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([folder.id])
                 } label: {
-                    Label("Reveal in Finder", systemImage: "folder")
+                    Label("Show in Finder", systemImage: "arrow.up.forward.app")
                 }
-                .help("Reveal this meeting's folder in Finder")
+                .help("Open this meeting's folder in Finder")
+            }
+            ToolbarItem {
+                Button {
+                    pipeline.regenerate(
+                        folder: folder,
+                        media: contents?.media,
+                        label: record == nil ? "Generating notes" : "Regenerating notes"
+                    )
+                } label: {
+                    Label(
+                        record == nil ? "Generate Notes" : "Regenerate Notes",
+                        systemImage: "sparkles"
+                    )
+                }
+                .disabled(contents?.media == nil || pipeline.isRunning)
+                .help(
+                    contents?.media == nil
+                        ? "There is no recording in this folder to process"
+                        : "Run the pipeline over this recording again"
+                )
             }
         }
         .task {
@@ -76,6 +98,12 @@ struct MeetingDetailView: View {
             }
 
             VStack(spacing: 0) {
+                TagBar(folder: folder)
+                if pipeline.isRunning || pipeline.state != .idle {
+                    PipelineBar()
+                }
+                Divider()
+
                 Picker("View", selection: $tab) {
                     ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -170,5 +198,143 @@ private struct PlayerPane: View {
                 }
             }
         }
+    }
+}
+
+
+/// The meeting's categories, editable inline.
+private struct TagBar: View {
+    @Environment(TagIndex.self) private var tags
+    let folder: MeetingFolder
+
+    @State private var draft = ""
+    @State private var adding = false
+    @State private var error: String?
+
+    private var current: [String] { tags.tags(for: folder.id) }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tag")
+                .foregroundStyle(.secondary)
+                .help("Categories for this meeting")
+
+            ForEach(current, id: \.self) { tag in
+                HStack(spacing: 4) {
+                    Text(tag)
+                    Button {
+                        apply { try tags.toggle(tag, for: folder.id) }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove \(tag)")
+                }
+                .font(.caption)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(.tint.opacity(0.15), in: Capsule())
+            }
+
+            if adding {
+                TextField("Category", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                    .onSubmit(commit)
+                Button("Add", action: commit).disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Cancel") { adding = false; draft = "" }
+            } else {
+                Menu {
+                    Button("New category…") { adding = true }
+                    // Offer what is already in use, so the same category is not
+                    // retyped three different ways.
+                    let unused = tags.allTags.filter { existing in
+                        !current.contains { $0.caseInsensitiveCompare(existing) == .orderedSame }
+                    }
+                    if !unused.isEmpty {
+                        Divider()
+                        ForEach(unused, id: \.self) { tag in
+                            Button(tag) { apply { try tags.toggle(tag, for: folder.id) } }
+                        }
+                    }
+                } label: {
+                    Label("Add", systemImage: "plus.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Categorise this meeting")
+            }
+
+            Spacer()
+
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red).lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func commit() {
+        let value = draft.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else { return }
+        apply { try tags.set(current + [value], for: folder.id) }
+        draft = ""
+        adding = false
+    }
+
+    private func apply(_ change: () throws -> Void) {
+        do {
+            try change()
+            error = nil
+        } catch {
+            self.error = "Could not save categories"
+        }
+    }
+}
+
+/// What the command line tool is doing, and what it said.
+private struct PipelineBar: View {
+    @Environment(Pipeline.self) private var pipeline
+    @State private var showLog = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                switch pipeline.state {
+                case .idle:
+                    EmptyView()
+                case .running(let label):
+                    ProgressView().controlSize(.small)
+                    Text("\(label)… this takes about as long as the meeting.")
+                        .font(.callout)
+                    Spacer()
+                    Button("Cancel") { pipeline.cancel() }
+                case .finished(let label):
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text("\(label) finished. Refresh to see it.").font(.callout)
+                    Spacer()
+                case .failed(let message):
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(message).font(.callout).lineLimit(2)
+                    Spacer()
+                }
+                if !pipeline.output.isEmpty {
+                    Button(showLog ? "Hide log" : "Show log") { showLog.toggle() }
+                }
+            }
+            if showLog, !pipeline.output.isEmpty {
+                ScrollView {
+                    Text(pipeline.output)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 160)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.4))
     }
 }

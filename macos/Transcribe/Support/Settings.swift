@@ -70,6 +70,21 @@ final class Settings {
         )
     }
 
+    func list(_ key: String) -> [String] { config.list(key) }
+
+    func setList(_ key: String, _ items: [String]) {
+        let cleaned = items.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard config.lists[key] ?? [] != cleaned else { return }
+        config.lists[key] = cleaned
+        do {
+            try Configuration.writeList(key, cleaned)
+            lastError = nil
+        } catch {
+            lastError = "Could not save \(Configuration.path.path(percentEncoded: false)): "
+                + error.localizedDescription
+        }
+    }
+
     func folder(_ key: String) -> URL? { config.url(key) }
 
     func setFolder(_ key: String, _ url: URL?) {
@@ -118,7 +133,22 @@ enum ConfigKey {
     static let obsPort = "obs_port"
     static let obsPassword = "obs_password"
 
+    // slack.py prefers a bot token and channel, falling back to the webhook.
+    // Neither bot key is in the CLI's DEFAULT_CONFIG, so the app is the only
+    // place they are discoverable.
+    static let slackBotToken = "slack_bot_token"
+    static let slackChannel = "slack_channel_id"
     static let slackWebhook = "slack_webhook_url"
+
+    static let meetingMode = "meeting_mode"
+    static let calendarSource = "calendar_source"
+    static let knownParticipants = "known_participants"
+    static let whisperPrompt = "whisper_prompt"
+    static let diarizationThreads = "diarization_threads"
+    static let pollSeconds = "autorecord_poll_seconds"
+    static let notesMaxTokens = "notes_max_tokens"
+    static let speakerMaxTokens = "speaker_max_tokens"
+    static let boundaryMaxTokens = "boundary_max_tokens"
 
     /// Whisper models the pipeline knows how to fetch, smallest first.
     static let whisperModels = [

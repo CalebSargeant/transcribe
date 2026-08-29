@@ -17,6 +17,7 @@ struct LibraryView: View {
     /// the line that matched.
     @State private var pendingSeek: Double?
     @State private var lastMeeting: MeetingFolder?
+    @State private var viewingResult = false
 
     /// What the detail pane is showing. A meeting is one case among several so
     /// the action list and the queue are first-class destinations rather than
@@ -27,7 +28,16 @@ struct LibraryView: View {
         case queue
     }
 
+    /// True while the results list should be showing.
+    ///
+    /// Opening a result used to clear the search box, which threw away the
+    /// query the user had typed. The query stays; this just steps aside so the
+    /// meeting can be read, and the toolbar offers a way back.
     private var searching: Bool {
+        !search.trimmingCharacters(in: .whitespaces).isEmpty && !viewingResult
+    }
+
+    private var hasQuery: Bool {
         !search.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
@@ -39,6 +49,7 @@ struct LibraryView: View {
             detail
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search every transcript")
+        .onChange(of: search) { viewingResult = false }
         .toolbar { toolbar }
         .task(id: settings.folder(ConfigKey.destination)) {
             // Reloads on its own when the folder is changed in Settings.
@@ -106,7 +117,7 @@ struct LibraryView: View {
     private func open(folder: URL, seek: Double?) {
         guard let match = library.folders.first(where: { $0.id == folder }) else { return }
         pendingSeek = seek
-        search = ""
+        viewingResult = true
         selection = .meeting(match)
     }
 
@@ -150,7 +161,7 @@ struct LibraryView: View {
         case .loaded:
             VStack(spacing: 0) {
                 List(selection: $selection) {
-                    if !searching {
+                    if !hasQuery {
                         Section {
                             Label("Action items", systemImage: "checklist")
                                 .badge(index.allActions.count)
@@ -213,7 +224,7 @@ struct LibraryView: View {
         // drawn from. A full list beside a filtered detail pane reads as though
         // the search missed them.
         let matches: Set<URL>? =
-            searching ? Set(index.search(search).map(\.folder)) : nil
+            hasQuery ? Set(index.search(search).map(\.folder)) : nil
 
         return library.folders.filter { folder in
             if let matches, !matches.contains(folder.id) { return false }
@@ -242,6 +253,16 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        if viewingResult, hasQuery {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    viewingResult = false
+                } label: {
+                    Label("Back to results", systemImage: "chevron.left")
+                }
+                .help("Return to the results for “\(search)”")
+            }
+        }
         ToolbarItem {
             Menu {
                 Button("All meetings") { tagFilter = nil }

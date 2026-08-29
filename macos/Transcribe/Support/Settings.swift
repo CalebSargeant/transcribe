@@ -23,16 +23,50 @@ final class Settings {
         lastError = nil
     }
 
+    /// Edits pending a write. A text field fires `set` on every keystroke, and
+    /// each write was a synchronous read-modify-write of the whole file on the
+    /// main actor -- typing an API key rewrote it fifty times.
+    private var pending: [String: String] = [:]
+    private var writeTask: Task<Void, Never>?
+
+    /// How long to wait for typing to stop. Long enough to coalesce a burst,
+    /// short enough that the CLI sees an edit made moments ago.
+    private static let writeDelay = Duration.milliseconds(400)
+
     private func set(_ key: String, _ value: String) {
         guard config.values[key] != value else { return }
         config.values[key] = value
-        do {
-            try Configuration.write([key: value])
-            lastError = nil
-        } catch {
-            lastError =
-                "Could not save \(Configuration.path.path(percentEncoded: false)): "
-                + error.localizedDescription
+        pending[key] = value
+        scheduleWrite()
+    }
+
+    private func scheduleWrite() {
+        writeTask?.cancel()
+        writeTask = Task { [weak self] in
+            try? await Task.sleep(for: Settings.writeDelay)
+            guard !Task.isCancelled else { return }
+            await self?.flush()
+        }
+    }
+
+    /// Write the pending edits. Public so a window closing can force it.
+    func flush() async {
+        guard !pending.isEmpty else { return }
+        let changes = pending
+        pending = [:]
+        // The failure has to come back across the actor hop, so it is returned
+        // rather than thrown: a swallowed write leaves the user believing a
+        // setting was saved when it was not.
+        let failure = await MeetingLibrary.offMainActor { () -> String? in
+            do {
+                try Configuration.write(changes)
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }
+        lastError = failure.map {
+            "Could not save \(Configuration.path.path(percentEncoded: false)): \($0)"
         }
     }
 

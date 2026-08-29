@@ -232,6 +232,16 @@ struct MeetingDetailView: View {
                 .labelsHidden()
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                // A segmented control buried in the content has no keyboard
+                // route; these give it one.
+                .background {
+                    HStack {
+                        Button("") { tab = .notes }.keyboardShortcut("[", modifiers: .command)
+                        Button("") { tab = .transcript }.keyboardShortcut("]", modifiers: .command)
+                    }
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                }
 
                 Divider()
 

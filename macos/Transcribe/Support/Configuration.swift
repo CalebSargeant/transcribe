@@ -79,7 +79,15 @@ struct Configuration: Sendable, Equatable {
     /// than half a new one.
     static func write(_ changes: [String: String], to url: URL = path) throws {
         guard !changes.isEmpty else { return }
+        try rewrite(url) { apply(changes, to: $0) }
+    }
 
+    /// Read, transform, and replace, keeping the file private throughout.
+    ///
+    /// Written once rather than twice: the scalar and list writers had the same
+    /// directory creation, temporary file, permissions and atomic replace
+    /// copied between them.
+    private static func rewrite(_ url: URL, _ transform: (String) -> String) throws {
         let manager = FileManager.default
         try manager.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -88,8 +96,10 @@ struct Configuration: Sendable, Equatable {
         )
 
         let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        let updated = apply(changes, to: existing)
+        let updated = transform(existing)
 
+        // A temporary in the same directory, so the replace is a rename rather
+        // than a copy across volumes, and a crash leaves the old file intact.
         let temporary = url.deletingLastPathComponent()
             .appending(path: ".config.yaml.\(UUID().uuidString)")
         try Data(updated.utf8).write(to: temporary, options: .atomic)
@@ -325,18 +335,7 @@ struct Configuration: Sendable, Equatable {
 
     /// Write a list through to the file.
     static func writeList(_ key: String, _ items: [String], to url: URL = path) throws {
-        let manager = FileManager.default
-        try manager.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        let temporary = url.deletingLastPathComponent()
-            .appending(path: ".config.yaml.\(UUID().uuidString)")
-        try Data(applyList(key, items, to: existing).utf8).write(to: temporary, options: .atomic)
-        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
-        _ = try manager.replaceItemAt(url, withItemAt: temporary)
+        try rewrite(url) { applyList(key, items, to: $0) }
     }
 
     /// An indented line that is neither a nested key nor a list item, so the

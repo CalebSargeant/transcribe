@@ -11,9 +11,10 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettings().tabItem { Label("General", systemImage: "folder") }
-            NotesSettings().tabItem { Label("Notes", systemImage: "text.alignleft") }
+            NotesSettings().tabItem { Label("Summaries", systemImage: "text.alignleft") }
             TranscriptionSettings().tabItem { Label("Transcription", systemImage: "waveform") }
             RecordingSettings().tabItem { Label("Recording", systemImage: "record.circle") }
+            SharingSettings().tabItem { Label("Sharing", systemImage: "square.and.arrow.up") }
         }
         .frame(width: 540)
         .overlay(alignment: .bottom) {
@@ -61,29 +62,6 @@ private struct GeneralSettings: View {
                     )
                 }
                 .help("How far either side of a recording to look for an event.")
-            }
-
-            Section("Slack") {
-                SecureField(
-                    "Bot token",
-                    text: settings.text(ConfigKey.slackBotToken),
-                    prompt: Text("xoxb-…")
-                )
-                .help("A bot token posts threaded notes and can upload files. Preferred.")
-                TextField(
-                    "Channel ID",
-                    text: settings.text(ConfigKey.slackChannel),
-                    prompt: Text("C01234ABCDE")
-                )
-                .help("Right-click the channel in Slack, View channel details, copy the ID at the bottom.")
-                TextField(
-                    "Webhook (fallback)",
-                    text: settings.text(ConfigKey.slackWebhook),
-                    prompt: Text("https://hooks.slack.com/…")
-                )
-                .help("Only used when no bot token is set. Posts a plain message.")
-                Text("A bot token and channel are used in preference to the webhook. Leave all three empty to skip Slack.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section {
@@ -158,6 +136,22 @@ private struct NotesSettings: View {
 
     private var provider: String { settings.config.string(ConfigKey.provider, default: "claude") }
 
+    private var hasKeyForSelectedProvider: Bool {
+        provider == "claude" ? hasClaudeKey : hasOpenAIKey
+    }
+
+    private var otherProviderHasKey: Bool {
+        provider == "claude" ? hasOpenAIKey : hasClaudeKey
+    }
+
+    /// An OAuth token is an accepted alternative to the Claude API key.
+    private var hasClaudeKey: Bool {
+        !settings.config.string(ConfigKey.anthropicKey).isEmpty
+            || !settings.config.string("anthropic_auth_token").isEmpty
+    }
+
+    private var hasOpenAIKey: Bool { !settings.config.string(ConfigKey.openAIKey).isEmpty }
+
     var body: some View {
         Form {
             Section("Provider") {
@@ -166,6 +160,25 @@ private struct NotesSettings: View {
                     Text("OpenAI compatible").tag("openai")
                 }
                 .pickerStyle(.radioGroup)
+
+                // Selecting a provider whose key is empty fails at the point
+                // of use, hours later, as "no notes were generated". Saying so
+                // here is the difference between a typo and a mystery.
+                if !hasKeyForSelectedProvider {
+                    Label {
+                        Text(
+                            "No API key for \(provider == "claude" ? "Claude" : "the OpenAI provider"). "
+                                + "Notes, categories and speaker naming will all be skipped."
+                                + (otherProviderHasKey
+                                    ? " The other provider does have one."
+                                    : "")
+                        )
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    .font(.callout)
+                }
             }
 
             if provider == "claude" {
@@ -370,4 +383,76 @@ private struct RecordingSettings: View {
 #Preview {
     SettingsView()
         .environment(Settings(config: Configuration(values: [:])))
+}
+
+
+// MARK: - Sharing
+
+private struct SharingSettings: View {
+    @Environment(Settings.self) private var settings
+    @Environment(AppleExport.self) private var export
+
+    var body: some View {
+        Form {
+            Section("Apple Notes") {
+                TextField(
+                    "Folder",
+                    text: settings.text(ConfigKey.notesFolder, default: "Meetings"),
+                    prompt: Text("Meetings")
+                )
+                .help("Created in Notes the first time a meeting is sent there.")
+                Text(
+                    "Notes has no API, so meetings are filed by asking the Notes app to do it. "
+                        + "macOS will ask for permission the first time."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Reminders") {
+                if export.remindersAuthorised {
+                    Picker("Add action items to", selection: settings.text(ConfigKey.remindersList)) {
+                        Text("Default list").tag("")
+                        ForEach(export.reminderLists, id: \.id) { list in
+                            Text(list.title).tag(list.id)
+                        }
+                    }
+                    .help("Which Reminders list a meeting's action items go into.")
+                } else {
+                    LabeledContent("Access") {
+                        Button("Allow Reminders…") {
+                            Task { await export.requestRemindersAccess() }
+                        }
+                    }
+                    Text("Action items become reminders, each linking back to its meeting.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Slack") {
+                SecureField(
+                    "Bot token",
+                    text: settings.text(ConfigKey.slackBotToken),
+                    prompt: Text("xoxb-…")
+                )
+                .help("A bot token posts threaded notes and can upload files. Preferred.")
+                TextField(
+                    "Channel ID",
+                    text: settings.text(ConfigKey.slackChannel),
+                    prompt: Text("C01234ABCDE")
+                )
+                .help("Right-click the channel in Slack, View channel details, copy the ID at the bottom.")
+                TextField(
+                    "Webhook (fallback)",
+                    text: settings.text(ConfigKey.slackWebhook),
+                    prompt: Text("https://hooks.slack.com/…")
+                )
+                .help("Only used when no bot token is set. Posts a plain message.")
+                Text("A bot token and channel are used in preference to the webhook. Leave all three empty to skip Slack.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+        }
+        .formStyle(.grouped)
+        .task { await export.loadReminderLists() }
+    }
 }

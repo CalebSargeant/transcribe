@@ -63,7 +63,10 @@ final class MeetingIndex {
 
     private var task: Task<Void, Never>?
 
-    static let cacheURL: URL = {
+    // nonisolated because the cache is read and written off the main actor.
+    // A static on a @MainActor type inherits that isolation: a warning today,
+    // an error under the Swift 6 language mode.
+    nonisolated static let cacheURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appending(path: "com.magmamoose.transcribe")
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)

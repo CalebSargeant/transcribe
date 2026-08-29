@@ -10,6 +10,8 @@ struct MeetingDetailView: View {
 
     @Environment(TagIndex.self) private var tags
     @Environment(Pipeline.self) private var pipeline
+    @Environment(AppleExport.self) private var appleExport
+    @Environment(Settings.self) private var settings
     @State private var contents: MeetingFolder.Contents?
     @State private var record: MeetingRecord?
     @State private var legacyTranscript: String?
@@ -40,7 +42,11 @@ struct MeetingDetailView: View {
             if playableMedia != nil {
                 ToolbarItem {
                     Toggle(isOn: $showPlayer) {
-                        Label("Player", systemImage: "play.rectangle")
+                        Label(
+                            "Recording",
+                            systemImage: playback.phase.kind == .audio
+                                ? "waveform" : "play.rectangle"
+                        )
                     }
                     .help("Show the recording")
                 }
@@ -54,24 +60,69 @@ struct MeetingDetailView: View {
                 .help("Open this meeting's folder in Finder")
             }
             ToolbarItem {
-                Button {
-                    pipeline.regenerate(
-                        folder: folder,
-                        media: playableMedia,
-                        label: record == nil ? "Generating notes" : "Regenerating notes"
-                    )
+                Menu {
+                    Button {
+                        pipeline.notesFromTranscript(folder: folder.id)
+                    } label: {
+                        Label("From the transcript", systemImage: "text.alignleft")
+                    }
+                    .disabled(!hasTranscript || pipeline.isRunning)
+                    .help("Fast: uses the transcript already saved, no re-transcribing")
+
+                    Button {
+                        pipeline.regenerate(
+                            folder: folder, media: playableMedia,
+                            label: "Re-transcribing \(folder.displayName)")
+                    } label: {
+                        Label("Re-transcribe the recording", systemImage: "waveform.badge.magnifyingglass")
+                    }
+                    .disabled(playableMedia == nil || pipeline.isRunning)
+                    .help("Slow: transcribes the audio again, then writes notes")
                 } label: {
                     Label(
-                        record == nil ? "Generate Notes" : "Regenerate Notes",
+                        record?.notes == nil ? "Generate Notes" : "Regenerate Notes",
                         systemImage: "sparkles"
                     )
+                } primaryAction: {
+                    // The common case, and the cheap one.
+                    if hasTranscript {
+                        pipeline.notesFromTranscript(folder: folder.id)
+                    } else {
+                        pipeline.regenerate(
+                            folder: folder, media: playableMedia,
+                            label: "Transcribing \(folder.displayName)")
+                    }
                 }
-                .disabled(playableMedia == nil || pipeline.isRunning)
+                .disabled(pipeline.isRunning || (!hasTranscript && playableMedia == nil))
                 .help(
-                    playableMedia == nil
-                        ? "There is no recording in this folder to process"
-                        : "Run the pipeline over this recording again"
+                    hasTranscript
+                        ? "Write notes from the transcript this meeting already has"
+                        : "Transcribe the recording, then write notes"
                 )
+            }
+            ToolbarItem {
+                Menu {
+                    Button {
+                        sendToNotes()
+                    } label: {
+                        Label("Send to Notes", systemImage: "note.text")
+                    }
+                    .disabled(record?.notes == nil || appleExport.isWorking)
+
+                    Button {
+                        sendToReminders()
+                    } label: {
+                        Label(
+                            actionItems.isEmpty
+                                ? "No action items"
+                                : "Send \(actionItems.count) action item(s) to Reminders",
+                            systemImage: "checklist")
+                    }
+                    .disabled(actionItems.isEmpty || appleExport.isWorking)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .help("Send this meeting to Notes or its actions to Reminders")
             }
         }
         .task {
@@ -98,6 +149,38 @@ struct MeetingDetailView: View {
         contents?.media == nil && playableMedia != nil
     }
 
+    private var hasTranscript: Bool {
+        contents?.transcriptText != nil || record?.segments.isEmpty == false
+    }
+
+    private var actionItems: [IndexedMeeting.Action] {
+        (record?.notes?.nextSteps ?? []).map {
+            IndexedMeeting.Action(owner: $0.owner, title: $0.title, detail: $0.detail)
+        }
+    }
+
+    private func sendToNotes() {
+        guard let record else { return }
+        let html = NoteBody.html(for: record, folder: folder.id, date: folder.date)
+        let name = settings.config.string(ConfigKey.notesFolder, default: "Meetings")
+        Task { await appleExport.sendToNotes(html: html, title: record.displayTitle, folder: name) }
+    }
+
+    private func sendToReminders() {
+        guard let record else { return }
+        let list = settings.config.values[ConfigKey.remindersList]
+        Task {
+            await appleExport.sendToReminders(
+                actions: actionItems,
+                meetingTitle: record.displayTitle,
+                meetingFolder: folder.id,
+                meetingDate: folder.date,
+                listID: list,
+                dueDate: nil
+            )
+        }
+    }
+
     private var subtitle: String {
         var parts: [String] = []
         if let date = folder.date {
@@ -115,29 +198,23 @@ struct MeetingDetailView: View {
     private var content: some View {
         VSplitView {
             if showPlayer, let media = playableMedia {
-                VStack(spacing: 0) {
-                    PlayerPane(playback: playback, media: media)
-                    if mediaIsElsewhere {
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle").foregroundStyle(.secondary)
-                            Text("Playing the original recording, which is not in this folder.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Button("Show in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([media])
-                            }
-                            .buttonStyle(.link).font(.caption)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 4)
-                    }
+                let pane = MediaPane(
+                    playback: playback, media: media, isElsewhere: mediaIsElsewhere)
+                if let height = pane.preferredHeight {
+                    // Audio gets a bar, not a screen's worth of black.
+                    pane.frame(height: height)
+                } else {
+                    pane.frame(minHeight: 200, idealHeight: 320)
                 }
-                .frame(minHeight: 200, idealHeight: 320)
             }
 
             VStack(spacing: 0) {
                 TagBar(folder: folder)
                 if pipeline.state != .idle {
                     PipelineStatusBar()
+                }
+                if appleExport.status != .idle {
+                    AppleExportBar()
                 }
                 Divider()
 
@@ -172,7 +249,7 @@ struct MeetingDetailView: View {
     }
 
     private func seek(to second: Double) {
-        guard playback.phase == .ready else { return }
+        guard playback.phase.isReady else { return }
         showPlayer = true
         playback.seek(
             toRecordingSecond: second,
@@ -212,39 +289,6 @@ struct MeetingDetailView: View {
         }
     }
 }
-
-/// The recording itself, or an explanation of why it will not play.
-private struct PlayerPane: View {
-    let playback: PlaybackController
-    let media: URL?
-
-    var body: some View {
-        switch playback.phase {
-        case .none:
-            Color.clear
-        case .checking:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .ready:
-            if let player = playback.player {
-                VideoPlayerView(player: player)
-            }
-        case .unplayable(let reason):
-            ContentUnavailableView {
-                Label("Cannot play this recording", systemImage: "film.stack")
-            } description: {
-                Text(reason)
-            } actions: {
-                if let media {
-                    Button("Open in QuickTime") { NSWorkspace.shared.open(media) }
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([media])
-                    }
-                }
-            }
-        }
-    }
-}
-
 
 /// The meeting's categories, editable inline.
 private struct TagBar: View {

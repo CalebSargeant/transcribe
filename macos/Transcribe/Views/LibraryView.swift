@@ -7,8 +7,9 @@ struct LibraryView: View {
     @Environment(MeetingIndex.self) private var index
     @Environment(Pipeline.self) private var pipeline
     @Environment(WatchQueue.self) private var queue
+    @Environment(MeetingLibrary.self) private var library
+    @Environment(AppCommands.self) private var commands
 
-    @State private var library = MeetingLibrary()
     @State private var selection: Selection?
     @State private var search = ""
     @State private var tagFilter: String?
@@ -41,6 +42,20 @@ struct LibraryView: View {
         .task(id: settings.folder(ConfigKey.destination)) {
             // Reloads on its own when the folder is changed in Settings.
             await refresh()
+        }
+        // Menu commands live in the App scene and cannot reach this view's
+        // state directly, so they raise a token the view acts on.
+        .onChange(of: commands.refreshToken) { Task { await refresh() } }
+        .onChange(of: commands.destination) { _, new in
+            if let new {
+                selection = new == .actions ? .actions : .queue
+                search = ""
+            }
+        }
+        .onChange(of: pipeline.state) { _, new in
+            // A finished run has written new files; the library, tags and
+            // index all describe the old ones until they are re-read.
+            if case .finished = new { Task { await refresh() } }
         }
     }
 

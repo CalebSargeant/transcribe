@@ -140,6 +140,12 @@ enum ConfigKey {
     static let slackChannel = "slack_channel_id"
     static let slackWebhook = "slack_webhook_url"
 
+    // The app's own settings, stored alongside the CLI's so there is still one
+    // file. The pipeline ignores keys it does not know.
+    static let notesFolder = "apple_notes_folder"
+    static let remindersList = "apple_reminders_list"
+    static let exportOnGenerate = "apple_export_automatically"
+
     static let meetingMode = "meeting_mode"
     static let calendarSource = "calendar_source"
     static let knownParticipants = "known_participants"

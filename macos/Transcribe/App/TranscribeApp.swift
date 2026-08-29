@@ -11,6 +11,9 @@ struct TranscribeApp: App {
     @State private var pipeline = Pipeline()
     @State private var queue = WatchQueue()
     @State private var completions = Completions()
+    @State private var appleExport = AppleExport()
+    @State private var library = MeetingLibrary()
+    @State private var commands = AppCommands()
 
     init() {
         // The monitor reads live settings, so both are built here rather than
@@ -31,6 +34,9 @@ struct TranscribeApp: App {
                 .environment(queue)
                 .environment(monitor)
                 .environment(completions)
+                .environment(appleExport)
+                .environment(library)
+                .environment(commands)
                 .task {
                     // Detection is native so the microphone and camera checks
                     // are attributed to this app, not to whichever terminal
@@ -43,6 +49,41 @@ struct TranscribeApp: App {
         .commands {
             // The app browses a folder; it has no documents to open.
             CommandGroup(replacing: .newItem) {}
+
+            // A native app is keyboard-drivable. Without these the only way to
+            // reach anything is the mouse.
+            CommandGroup(after: .toolbar) {
+                Button("Meetings") { commands.show(.actions) }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("Action Items") { commands.show(.actions) }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("Recording Queue") { commands.show(.queue) }
+                    .keyboardShortcut("3", modifiers: .command)
+                Divider()
+                Button("Refresh") { commands.refresh() }
+                    .keyboardShortcut("r", modifiers: .command)
+            }
+
+            CommandGroup(after: .appInfo) {
+                Button("Open Meetings Folder") {
+                    if let url = settings.folder(ConfigKey.destination) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Button("Open Watch Folder") {
+                    if let url = settings.folder(ConfigKey.watch) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+
+            CommandGroup(replacing: .help) {
+                Button("Transcribe on GitHub") {
+                    if let url = URL(string: "https://github.com/CalebSargeant/transcribe") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
         }
 
         MenuBarExtra {
@@ -58,6 +99,7 @@ struct TranscribeApp: App {
         SwiftUI.Settings {
             SettingsView()
                 .environment(settings)
+                .environment(appleExport)
         }
     }
 }

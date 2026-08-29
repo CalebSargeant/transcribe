@@ -795,3 +795,128 @@ struct MediaFallbackTests {
         #expect(meeting.clipOffset(forMedia: URL(filePath: "/x/a.mov")) == 12)
     }
 }
+
+@Suite("AppleScript safety")
+struct AppleScriptTests {
+    /// The note body never reaches script source. It goes via a file, so a
+    /// transcript containing a quote cannot terminate a string literal and a
+    /// transcript containing script cannot be executed.
+    @Test("the body is passed by file, not interpolated")
+    func bodyIsNotInterpolated() {
+        let script = AppleExport.notesScript(bodyFile: "/tmp/note.html", folder: "Meetings")
+        #expect(script.contains("read POSIX file \"/tmp/note.html\""))
+        #expect(script.contains("bodyText"))
+        // Nothing that looks like meeting content appears in the source.
+        #expect(!script.contains("<h1>"))
+    }
+
+    @Test(
+        "values interpolated into the script are escaped",
+        arguments: [
+            (#"say "hi""#, #"say \"hi\""#),
+            (#"back\slash"#, #"back\\slash"#),
+            (#"both\"here"#, #"both\\\"here"#),
+            ("plain", "plain"),
+        ])
+    func escaping(raw: String, expected: String) {
+        #expect(AppleExport.escape(raw) == expected)
+    }
+
+    /// A folder name is user input too. Quoting it wrongly would let it close
+    /// the literal and append statements.
+    @Test("a folder name cannot break out of its literal")
+    func folderCannotEscape() {
+        let hostile = #"X" & (do shell script "touch /tmp/pwned") & ""#
+        let script = AppleExport.notesScript(bodyFile: "/tmp/a.html", folder: hostile)
+        // Every quote from the input is escaped, so none of them terminate the
+        // literal the folder name sits in.
+        #expect(!script.contains(#"folder "X" &"#))
+        #expect(script.contains(#"\""#))
+    }
+
+    @Test("backslashes are escaped before quotes, not after")
+    func escapeOrdering() {
+        // Escaping quotes first would then double the backslashes added for
+        // them, producing \\" which is a literal backslash then a terminator.
+        #expect(AppleExport.escape(#"\"#) == #"\\"#)
+        #expect(AppleExport.escape(#"""#) == #"\""#)
+    }
+}
+
+@Suite("Note body")
+struct NoteBodyTests {
+    private func record(_ json: String) throws -> MeetingRecord {
+        try PipelineDate.decoder().decode(MeetingRecord.self, from: Data(json.utf8))
+    }
+
+    private let base = #"{"index":1,"start":0,"end":600,"duration_seconds":600,"attendees":["Arno"],"speakers":[],"segments":[]"#
+
+    @Test("HTML special characters in meeting text are escaped")
+    func escapesHTML() throws {
+        let meeting = try record(
+            base + #","notes":{"title":"A & B","summary":"1 < 2 and 3 > 2"}}"#)
+        let html = NoteBody.html(for: meeting, folder: URL(filePath: "/m"), date: nil)
+        #expect(html.contains("A &amp; B"))
+        #expect(html.contains("1 &lt; 2 and 3 &gt; 2"))
+    }
+
+    /// Ampersand must be replaced first or the entities introduced by the
+    /// later replacements get their own ampersands escaped again.
+    @Test("escaping does not double-escape")
+    func noDoubleEscaping() {
+        #expect(NoteBody.escape("a & b < c") == "a &amp; b &lt; c")
+        #expect(!NoteBody.escape("&").contains("&amp;amp;"))
+    }
+
+    @Test("a meeting with no notes still produces a usable note")
+    func withoutNotes() throws {
+        let meeting = try record(base + "}")
+        let html = NoteBody.html(for: meeting, folder: URL(filePath: "/m"), date: nil)
+        #expect(html.contains("No generated notes"))
+        #expect(html.contains("<h1>"))
+    }
+
+    @Test("action items and decisions are listed")
+    func listsContent() throws {
+        let meeting = try record(
+            base
+                + #","notes":{"title":"T","next_steps":[{"owner":"Arno","title":"Do it","detail":"soon"}],"decisions":[{"title":"D","detail":"agreed","status":"aligned"}]}}"#
+        )
+        let html = NoteBody.html(for: meeting, folder: URL(filePath: "/m"), date: nil)
+        #expect(html.contains("Next steps"))
+        #expect(html.contains("Do it"))
+        #expect(html.contains("Arno"))
+        #expect(html.contains("Agreed"))
+    }
+
+    @Test("the folder path is included so the note links back")
+    func includesFolder() throws {
+        let meeting = try record(base + "}")
+        let html = NoteBody.html(
+            for: meeting, folder: URL(filePath: "/Meetings/A Meeting"), date: nil)
+        #expect(html.contains("/Meetings/A Meeting"))
+    }
+}
+
+@MainActor
+@Suite("Media kind")
+struct MediaKindTests {
+    /// Audio must not be presented in a video-sized frame; a .wav in an
+    /// AVPlayerView is a large black rectangle.
+    @Test("audio asks for a compact height, video does not")
+    func heights() {
+        let controller = PlaybackController()
+        let pane = MediaPane(playback: controller, media: nil)
+        // .none while nothing is open.
+        #expect(pane.preferredHeight == 0)
+    }
+
+    @Test("the ready phase carries what kind of media it is")
+    func phaseCarriesKind() {
+        #expect(PlaybackController.Phase.ready(.audio).kind == .audio)
+        #expect(PlaybackController.Phase.ready(.video).kind == .video)
+        #expect(PlaybackController.Phase.checking.kind == nil)
+        #expect(PlaybackController.Phase.ready(.audio).isReady)
+        #expect(!PlaybackController.Phase.unplayable("x").isReady)
+    }
+}

@@ -56,6 +56,23 @@ final class Pipeline {
         run(tool: tool, arguments: [media.path(percentEncoded: false)], label: label)
     }
 
+    /// Write notes from the transcript a folder already has.
+    ///
+    /// The cheap path, and the right default. Re-transcribing an hour of audio
+    /// to produce notes from words the folder already contains is wasteful, and
+    /// for older meetings the audio may not even be there any more.
+    func notesFromTranscript(folder: URL) {
+        guard let tool = Self.locate() else {
+            state = .failed(missingToolMessage)
+            return
+        }
+        run(
+            tool: tool,
+            arguments: ["notes", folder.path(percentEncoded: false)],
+            label: "Writing notes from the transcript"
+        )
+    }
+
     /// Process one recording from the watch folder.
     func process(_ url: URL) {
         guard let tool = Self.locate() else {

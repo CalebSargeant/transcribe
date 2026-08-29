@@ -160,3 +160,33 @@ struct PipelineStatusBar: View {
         .background(.quaternary.opacity(0.4))
     }
 }
+
+/// What the Notes/Reminders export is doing.
+struct AppleExportBar: View {
+    @Environment(AppleExport.self) private var export
+
+    var body: some View {
+        HStack(spacing: 8) {
+            switch export.status {
+            case .idle:
+                EmptyView()
+            case .working(let label):
+                ProgressView().controlSize(.small)
+                Text("\(label)…").font(.callout)
+            case .done(let message):
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text(message).font(.callout)
+            case .failed(let message):
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(message).font(.callout).lineLimit(3).textSelection(.enabled)
+            }
+            Spacer()
+            if export.status != .idle, !export.isWorking {
+                Button("Dismiss") { export.clear() }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.4))
+    }
+}

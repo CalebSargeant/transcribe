@@ -351,6 +351,7 @@ def _print_usage():
     print("  transcribe setup-daemon           - Install background daemon")
     print("  transcribe autorecord             - Record meetings automatically via OBS")
     print("  transcribe setup-autorecord       - Install the auto-record agent")
+    print("  transcribe notes <folders>        - Write notes from an existing transcript")
     print("  transcribe categorise [folders]   - Label meetings with categories")
     print("       --overwrite    replace categories that are already set")
     print("  transcribe record start|stop      - Drive an OBS recording")
@@ -431,6 +432,15 @@ def main():
         except MenuBarUnavailable as e:
             print(f"✗ {e}")
             sys.exit(1)
+    elif command == "notes":
+        from .from_transcript import generate_for_folders
+
+        config = _apply_flags(load_config(), selected)
+        folders = [a for a in args[1:] if not a.startswith("--")]
+        if not folders:
+            print("Usage: transcribe notes <meeting folder> [more folders]")
+            sys.exit(1)
+        sys.exit(generate_for_folders(folders, config))
     elif command == "categorise" or command == "categorize":
         from .categorise import categorise_folders
 

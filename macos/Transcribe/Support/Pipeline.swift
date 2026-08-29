@@ -83,7 +83,14 @@ final class Pipeline {
             state = .failed("This meeting has no recording to reprocess.")
             return
         }
-        run(tool: tool, arguments: [media.path(percentEncoded: false)], label: label)
+        // --keep-source, or the run moves this meeting's own recording out of
+        // the folder being reprocessed and into whichever new folder it
+        // produces, leaving a duplicate meeting and a folder with no media.
+        run(
+            tool: tool,
+            arguments: [media.path(percentEncoded: false), "--keep-source"],
+            label: label
+        )
     }
 
     /// Write notes from the transcript a folder already has.
@@ -109,7 +116,12 @@ final class Pipeline {
             state = .failed(missingToolMessage)
             return
         }
-        run(tool: tool, arguments: [url.path(percentEncoded: false)], label: "Processing \(url.lastPathComponent)")
+        // A watch-folder recording is meant to be filed, so the source moves.
+        run(
+            tool: tool,
+            arguments: [url.path(percentEncoded: false)],
+            label: "Processing \(url.lastPathComponent)"
+        )
     }
 
     /// Ask the CLI to categorise meetings using the configured LLM.

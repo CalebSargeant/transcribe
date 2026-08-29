@@ -1252,3 +1252,160 @@ struct DurationTests {
         #expect(Timecode.minutes(from: 0) == nil)
     }
 }
+
+@MainActor
+@Suite("Recording state machine")
+struct RecordingStateTests {
+    private final class Box: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [Bool] = []
+        var failStops = false
+        var failStarts = false
+        func call(_ start: Bool) -> Bool {
+            lock.lock(); stored.append(start); lock.unlock()
+            return start ? !failStarts : !failStops
+        }
+        var values: [Bool] { lock.lock(); defer { lock.unlock() }; return stored }
+    }
+
+    private func monitor() -> (RecordingMonitor, Box) {
+        let m = RecordingMonitor(
+            settings: Settings(
+                config: Configuration(values: [
+                    ConfigKey.startAfter: "45", ConfigKey.stopAfter: "120",
+                    ConfigKey.minFreeGB: "0",
+                ])))
+        let box = Box()
+        m.control = { box.call($0) }
+        return (m, box)
+    }
+
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+    /// "Record Now" with no meeting detected used to be stopped by the very
+    /// next poll, because quietSince was already set from before the start and
+    /// the stop test was therefore already satisfied.
+    @Test("a manual start is not undone by the next poll")
+    func manualStartSurvives() async {
+        let (m, box) = monitor()
+        m.setPresenceForTesting(Presence.State(microphone: false))
+        await m.decide(now: t0)                    // quiet: sets quietSince
+        await m.setRecording(true, now: t0)        // manual start
+        #expect(m.status == .recording)
+        await m.decide(now: t0.addingTimeInterval(5))
+        #expect(m.status == .recording)
+        #expect(box.values == [true])
+    }
+
+    /// It should still stop once the configured silence has actually elapsed
+    /// from the start, not from before it.
+    @Test("a manual recording still stops after the silence window")
+    func manualStartStillStops() async {
+        let (m, box) = monitor()
+        m.setPresenceForTesting(Presence.State(microphone: false))
+        await m.decide(now: t0)
+        await m.setRecording(true, now: t0)
+        await m.decide(now: t0.addingTimeInterval(60))
+        #expect(m.status == .recording)
+        await m.decide(now: t0.addingTimeInterval(200))
+        #expect(box.values == [true, false])
+        #expect(m.status == .idle)
+    }
+
+    /// The menu bar swaps Stop for Record Now when it is not .recording, so a
+    /// paused recording had no stop button anywhere in the app.
+    @Test("pausing while recording stops the recorder")
+    func pauseStops() async {
+        let (m, box) = monitor()
+        m.setPresenceForTesting(Presence.State(microphone: true, camera: true))
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(m.status == .recording)
+
+        m.paused = true
+        // The didSet stop is asynchronous.
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(box.values == [true, false])
+        #expect(m.status == .paused)
+    }
+
+    @Test("pausing when not recording stops nothing")
+    func pauseWhenIdleIsQuiet() async {
+        let (m, box) = monitor()
+        m.paused = true
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(box.values.isEmpty)
+    }
+
+    /// A failed stop must stay .recording or nothing ever retries it and the
+    /// recorder runs forever.
+    @Test("a failed stop keeps trying")
+    func failedStopRetries() async {
+        let (m, box) = monitor()
+        m.setPresenceForTesting(Presence.State(microphone: true, camera: true))
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        box.failStops = true
+        m.setPresenceForTesting(Presence.State(microphone: false))
+        await m.decide(now: t0.addingTimeInterval(60))
+        await m.decide(now: t0.addingTimeInterval(200))
+        #expect(m.status == .recording)
+        box.failStops = false
+        await m.decide(now: t0.addingTimeInterval(400))
+        #expect(m.status == .idle)
+        #expect(box.values.filter { !$0 }.count >= 2)
+    }
+
+    /// A failed start must not retry every poll against an OBS that is not
+    /// there.
+    @Test("a failed start backs off")
+    func failedStartBacksOff() async {
+        let (m, box) = monitor()
+        box.failStarts = true
+        m.setPresenceForTesting(Presence.State(microphone: true, camera: true))
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(m.status != .recording)
+        await m.decide(now: t0.addingTimeInterval(46))
+        #expect(box.values.filter { $0 }.count == 1)
+    }
+}
+
+@MainActor
+@Suite("Settings durability")
+struct SettingsDurabilityTests {
+    private func store() -> (Settings, URL) {
+        let dir = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "settings-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return (Settings(config: Configuration(values: [:])), dir)
+    }
+
+    /// The debounce plus Cmd-Q lost the last edit, and flush() had no callers
+    /// at all. hasUnsavedEdits is what the terminate handler gates on.
+    @Test("an edit is reported as unsaved until it is flushed")
+    func unsavedIsVisible() async {
+        let (settings, _) = store()
+        #expect(!settings.hasUnsavedEdits)
+        settings.text("apple_notes_folder").wrappedValue = "Meetings"
+        #expect(settings.hasUnsavedEdits)
+    }
+
+    @Test("a list edit also counts as unsaved")
+    func listEditIsUnsaved() {
+        let (settings, _) = store()
+        settings.setList("known_participants", ["Arno"])
+        #expect(settings.hasUnsavedEdits)
+    }
+
+    /// reload() discards queued edits; leaving them armed wrote the value the
+    /// user had just discarded, 400ms later.
+    @Test("reloading cancels queued edits")
+    func reloadCancels() {
+        let (settings, _) = store()
+        settings.text("apple_notes_folder").wrappedValue = "Meetings"
+        #expect(settings.hasUnsavedEdits)
+        settings.reload()
+        #expect(!settings.hasUnsavedEdits)
+    }
+}

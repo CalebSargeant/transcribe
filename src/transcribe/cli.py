@@ -345,7 +345,7 @@ def _voice_memos(args, selected):
 
 def _print_usage():
     print("Usage:")
-    print("  transcribe <video_file> [--json] [--flat] [--no-split]")
+    print("  transcribe <video_file> [--json] [--flat] [--no-split] [--keep-source]")
     print("                                    - Transcribe a single file")
     print("  transcribe watch [directory]      - Watch directory for new files")
     print("  transcribe setup-daemon           - Install background daemon")
@@ -389,6 +389,7 @@ def main():
         "--flat": "flat",
         "--no-split": "no_split",
         "--no-diarize": "no_diarize",
+        "--keep-source": "keep_source",
     }
     selected = {name for arg, name in flags.items() if arg in argv}
     args = [arg for arg in argv if arg not in flags]
@@ -509,6 +510,11 @@ def _apply_flags(config, selected):
         config["split_video"] = False
     if "no_diarize" in selected:
         config["diarization_enabled"] = False
+    if "keep_source" in selected:
+        # Leave the recording where it is. Reprocessing a meeting's own media
+        # would otherwise move it out of the folder being reprocessed and into
+        # whichever new folder the run produced.
+        config["move_source_video"] = False
     return config
 
 

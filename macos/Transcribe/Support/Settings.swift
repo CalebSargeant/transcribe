@@ -19,6 +19,10 @@ final class Settings {
     }
 
     func reload() {
+        // Anything queued was superseded by what is on disk; letting it flush
+        // afterwards would write the value the user just discarded.
+        writeTask?.cancel()
+        pending = [:]
         config = .load()
         lastError = nil
     }
@@ -27,6 +31,7 @@ final class Settings {
     /// each write was a synchronous read-modify-write of the whole file on the
     /// main actor -- typing an API key rewrote it fifty times.
     private var pending: [String: String] = [:]
+    private var pendingLists: [String: [String]] = [:]
     private var writeTask: Task<Void, Never>?
 
     /// How long to wait for typing to stop. Long enough to coalesce a burst,
@@ -49,24 +54,49 @@ final class Settings {
         }
     }
 
-    /// Write the pending edits. Public so a window closing can force it.
+    /// True while an edit has not reached disk. Sudden termination is disabled
+    /// for exactly this window.
+    var hasUnsavedEdits: Bool { !pending.isEmpty || !pendingLists.isEmpty }
+
+    /// Write the pending edits now. Called on quit and when the Settings window
+    /// closes, because a 400ms debounce plus Cmd-Q loses the last edit
+    /// otherwise -- and `NSSupportsSuddenTermination` makes that likelier.
     func flush() async {
-        guard !pending.isEmpty else { return }
+        guard !pending.isEmpty || !pendingLists.isEmpty else { return }
         let changes = pending
+        let lists = pendingLists
         pending = [:]
+        pendingLists = [:]
         // The failure has to come back across the actor hop, so it is returned
         // rather than thrown: a swallowed write leaves the user believing a
         // setting was saved when it was not.
+        // Both kinds go through one hop, in order, so a scalar write and a
+        // list write cannot read-modify-write the same file concurrently.
         let failure = await MeetingLibrary.offMainActor { () -> String? in
             do {
                 try Configuration.write(changes)
+                for (key, items) in lists.sorted(by: { $0.key < $1.key }) {
+                    try Configuration.writeList(key, items)
+                }
                 return nil
             } catch {
                 return error.localizedDescription
             }
         }
-        lastError = failure.map {
-            "Could not save \(Configuration.path.path(percentEncoded: false)): \($0)"
+        if let failure {
+            // Put the edits back, or `set`'s equality guard blocks a retry
+            // forever: config.values already holds the new value, so the user
+            // typing it again is a no-op.
+            for (key, value) in changes where pending[key] == nil {
+                pending[key] = value
+            }
+            for (key, items) in lists where pendingLists[key] == nil {
+                pendingLists[key] = items
+            }
+            lastError =
+                "Could not save \(Configuration.path.path(percentEncoded: false)): \(failure)"
+        } else {
+            lastError = nil
         }
     }
 
@@ -110,13 +140,8 @@ final class Settings {
         let cleaned = items.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard config.lists[key] ?? [] != cleaned else { return }
         config.lists[key] = cleaned
-        do {
-            try Configuration.writeList(key, cleaned)
-            lastError = nil
-        } catch {
-            lastError = "Could not save \(Configuration.path.path(percentEncoded: false)): "
-                + error.localizedDescription
-        }
+        pendingLists[key] = cleaned
+        scheduleWrite()
     }
 
     func folder(_ key: String) -> URL? { config.url(key) }

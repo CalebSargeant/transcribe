@@ -318,6 +318,10 @@ def generate_for_folder(folder, config, name_speakers=True):
         _recording_start(folder, payload),
         config,
         split_video=False,
+        # The transcript in this folder is what the meeting was built from.
+        # Rewriting it replaces the original with a reconstruction, and for a
+        # prose transcript that reconstruction invents timestamps.
+        write_transcript=False,
     )
     return notes
 

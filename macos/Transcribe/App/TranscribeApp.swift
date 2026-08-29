@@ -1,7 +1,26 @@
 import SwiftUI
 
+/// Holds the app open long enough to finish writing settings.
+///
+/// The settings store debounces writes by 400ms and the app declares
+/// `NSSupportsAutomaticTermination`, so quitting just after typing an API key
+/// dropped it with no warning at all.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var settings: Settings?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let settings, settings.hasUnsavedEdits else { return .terminateNow }
+        Task { @MainActor in
+            await settings.flush()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
 @main
 struct TranscribeApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     // One store each, shared by every window and the menu bar, so nothing can
     // disagree about where the meetings are or what is in them.
     @State private var settings: Settings
@@ -38,6 +57,7 @@ struct TranscribeApp: App {
                 .environment(library)
                 .environment(commands)
                 .task {
+                    delegate.settings = settings
                     // Detection is native so the microphone and camera checks
                     // are attributed to this app, not to whichever terminal
                     // launched the CLI. That is the whole reason for a bundle.
@@ -101,6 +121,9 @@ struct TranscribeApp: App {
             SettingsView()
                 .environment(settings)
                 .environment(appleExport)
+                // Closing the window is the other moment an edit can be
+                // stranded in the debounce.
+                .onDisappear { Task { await settings.flush() } }
         }
     }
 }

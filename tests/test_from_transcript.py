@@ -285,3 +285,54 @@ def test_no_folders_is_an_error(config):
 
 def test_no_provider_for_a_run_is_an_error(tmp_path):
     assert generate_for_folders([str(tmp_path)], {"anthropic_api_key": ""}) == 1
+
+
+# --- the source transcript is never destroyed --------------------------------
+
+
+def test_prose_transcript_is_not_overwritten(monkeypatch, tmp_path, config):
+    """The reconstruction invents speakers and timestamps; the original is gone.
+
+    Writing it back also poisons the next run, which then reads the invented
+    timings as though they were measured.
+    """
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    original = "Yes we are there. Okay thank you. So recapping a bit of history."
+    (folder / "transcript.txt").write_text(original)
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    generate_for_folder(folder, config, name_speakers=False)
+
+    assert (folder / "transcript.txt").read_text() == original
+
+
+def test_a_timed_transcript_is_not_rewritten_either(monkeypatch, tmp_path, config):
+    """Re-rendering raw whisper output drops the end times it recorded."""
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text(RANGED)
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    generate_for_folder(folder, config, name_speakers=False)
+
+    assert (folder / "transcript.txt").read_text() == RANGED
+
+
+def test_the_other_outputs_are_still_written(monkeypatch, tmp_path, config):
+    """Leaving the transcript alone must not skip the notes."""
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text(GROUPED)
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    generate_for_folder(folder, config, name_speakers=False)
+
+    for name in ("notes.json", "notes.md", "notes.html", "summary.txt"):
+        assert (folder / name).exists(), name

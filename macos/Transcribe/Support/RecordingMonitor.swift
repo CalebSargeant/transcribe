@@ -41,15 +41,31 @@ final class RecordingMonitor {
     private(set) var quietSince: Date?
     private(set) var lastError: String?
 
+    /// Pausing means "stop deciding for me". It must not mean "abandon a
+    /// recording in progress": the menu bar swaps Stop for Record Now when it
+    /// is not `.recording`, so a paused recording had no stop button anywhere.
     var paused = false {
         didSet {
+            guard paused != oldValue else { return }
             if paused {
+                let wasRecording = status == .recording
                 detectedSince = nil
                 status = .paused
+                if wasRecording { Task { await stopBecausePaused() } }
             } else if status == .paused {
                 status = .idle
             }
         }
+    }
+
+    private func stopBecausePaused() async {
+        guard let control else { return }
+        if await control(false) {
+            lastError = nil
+        } else {
+            lastError = "Paused, but the recording could not be stopped."
+        }
+        quietSince = nil
     }
 
     /// Starts and stops the recording, returning whether it worked. Injected
@@ -144,7 +160,7 @@ final class RecordingMonitor {
 
         if status == .recording {
             if let quietSince, now.timeIntervalSince(quietSince) >= stopDelay {
-                await setRecording(false)
+                await setRecording(false, now: now)
             }
             return
         }
@@ -155,7 +171,7 @@ final class RecordingMonitor {
                 status = .detected
                 return
             }
-            await setRecording(true)
+            await setRecording(true, now: now)
             return
         }
 
@@ -176,22 +192,42 @@ final class RecordingMonitor {
     }
 
     /// Start or stop, and only claim the state the recorder actually reached.
-    func setRecording(_ recording: Bool) async {
+    ///
+    /// Takes the clock rather than reading it, so the whole machine runs on one
+    /// time source. Reading `Date()` here left the clocks it sets on a
+    /// different timeline from the ones `decide(now:)` compares them against.
+    func setRecording(_ recording: Bool, now: Date = Date()) async {
         guard let control else {
             lastError = "No recorder is connected."
             return
         }
         let succeeded = await control(recording)
-        if succeeded {
-            lastError = nil
-            status = recording ? .recording : (meetingInProgress ? .detected : .idle)
-            if !recording { detectedSince = nil }
-        } else {
-            // Reporting "Recording" for a start that failed is how the menu bar
-            // ends up in a state it can never leave.
+        guard succeeded else {
+            // A failed *stop* must stay .recording, or nothing ever retries it
+            // and the recorder runs forever. Only a failed start falls back.
             lastError =
                 recording ? "Could not start the recording." : "Could not stop the recording."
+            if recording {
+                status = meetingInProgress ? .detected : .idle
+                // Back off rather than retrying every poll against an OBS that
+                // is not there.
+                detectedSince = nil
+            }
+            return
+        }
+
+        lastError = nil
+        if recording {
+            status = .recording
+            // Both clocks reset on a start. Without this the stop test is
+            // already satisfied by whatever quiet preceded a manual start, and
+            // the next poll stops the recording the user just asked for.
+            quietSince = meetingInProgress ? nil : now
+            detectedSince = now
+        } else {
             status = meetingInProgress ? .detected : .idle
+            detectedSince = nil
+            quietSince = nil
         }
     }
 

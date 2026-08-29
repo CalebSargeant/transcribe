@@ -276,7 +276,9 @@ enum NoteBody {
         var parts = ["<h1>\(escape(record.displayTitle))</h1>"]
         var meta: [String] = []
         if let date { meta.append(escape(date.formatted(date: .long, time: .shortened))) }
-        if record.durationSeconds > 0 { meta.append("\(Int(record.durationSeconds / 60)) minutes") }
+        if let minutes = Timecode.minutes(from: record.durationSeconds) {
+            meta.append("\(minutes) minutes")
+        }
         if !record.attendees.isEmpty {
             meta.append(escape(record.attendees.joined(separator: ", ")))
         }

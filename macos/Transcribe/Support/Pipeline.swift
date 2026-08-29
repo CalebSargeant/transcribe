@@ -133,16 +133,28 @@ final class Pipeline {
 
     /// Start or stop an OBS recording via the CLI, which already speaks
     /// obs-websocket.
-    func controlRecording(start: Bool) {
+    ///
+    /// Awaited and returning success, so the caller does not claim a recording
+    /// started when OBS refused. This deliberately does not go through `run`:
+    /// it must not clobber the state of a long transcription that is running.
+    @discardableResult
+    func controlRecording(start: Bool) async -> Bool {
         guard let tool = Self.locate() else {
             state = .failed(missingToolMessage)
-            return
+            return false
         }
-        run(
+        let result = await Self.execute(
             tool: tool,
             arguments: ["record", start ? "start" : "stop"],
-            label: start ? "Starting recording" : "Stopping recording"
+            box: ProcessBox()
         )
+        if result.status != 0 {
+            output = result.output
+            state = .failed(
+                (start ? "Could not start recording" : "Could not stop recording")
+                    + " (exit \(result.status)). See the log below.")
+        }
+        return result.status == 0
     }
 
     private var missingToolMessage: String {

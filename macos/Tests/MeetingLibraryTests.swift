@@ -1008,3 +1008,149 @@ struct AppCommandsTests {
         #expect(commands.refreshToken == start + 2)
     }
 }
+
+@MainActor
+@Suite("Auto-record")
+struct AutoRecordTests {
+    /// Builds a monitor with a clock the test controls and a recorder that
+    /// records what it was asked to do.
+    private func monitor(
+        config: [String: String] = [:], succeeds: Bool = true
+    ) -> (RecordingMonitor, () -> [Bool]) {
+        var defaults = [
+            ConfigKey.startAfter: "45",
+            ConfigKey.stopAfter: "120",
+            ConfigKey.minFreeGB: "0",
+            ConfigKey.micOnly: "false",
+            ConfigKey.useCalendar: "true",
+        ]
+        for (k, v) in config { defaults[k] = v }
+        let monitor = RecordingMonitor(settings: Settings(config: Configuration(values: defaults)))
+        let calls = Box()
+        monitor.control = { start in calls.append(start); return succeeds }
+        return (monitor, { calls.values })
+    }
+
+    private final class Box: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [Bool] = []
+        func append(_ value: Bool) { lock.lock(); stored.append(value); lock.unlock() }
+        var values: [Bool] { lock.lock(); defer { lock.unlock() }; return stored }
+    }
+
+    private func seeing(_ monitor: RecordingMonitor, mic: Bool, camera: Bool = false) {
+        monitor.setPresenceForTesting(
+            Presence.State(microphone: mic, camera: camera))
+    }
+
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+    /// A notification chime must not produce a recording.
+    @Test("a brief meeting does not start one")
+    func briefMeetingIgnored() async {
+        let (m, calls) = monitor()
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(44))
+        #expect(calls().isEmpty)
+        #expect(m.status == .detected)
+    }
+
+    @Test("a sustained meeting starts one")
+    func sustainedMeetingStarts() async {
+        let (m, calls) = monitor()
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(calls() == [true])
+        #expect(m.status == .recording)
+    }
+
+    /// Swapping a headset must not chop the meeting in two.
+    @Test("a short silence does not stop it")
+    func shortSilenceKeepsRecording() async {
+        let (m, calls) = monitor()
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        seeing(m, mic: false)
+        await m.decide(now: t0.addingTimeInterval(60))
+        await m.decide(now: t0.addingTimeInterval(150))
+        #expect(calls() == [true])
+        #expect(m.status == .recording)
+    }
+
+    @Test("a sustained silence stops it")
+    func sustainedSilenceStops() async {
+        let (m, calls) = monitor()
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        seeing(m, mic: false)
+        await m.decide(now: t0.addingTimeInterval(60))
+        await m.decide(now: t0.addingTimeInterval(181))
+        #expect(calls() == [true, false])
+        #expect(m.status == .idle)
+    }
+
+    /// The whole point of the pause toggle, which previously paused a feature
+    /// that was never running.
+    @Test("pausing prevents a start")
+    func pauseStops() async {
+        let (m, calls) = monitor()
+        m.paused = true
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(120))
+        #expect(calls().isEmpty)
+        #expect(m.status == .paused)
+    }
+
+    /// A failed start must not leave the menu bar claiming it is recording.
+    @Test("a refused start does not claim to be recording")
+    func failedStartIsNotRecording() async {
+        let (m, calls) = monitor(succeeds: false)
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(calls() == [true])
+        #expect(m.status != .recording)
+        #expect(m.lastError != nil)
+    }
+
+    @Test("the microphone alone is not a meeting")
+    func micAloneIsNotAMeeting() async {
+        let (m, calls) = monitor()
+        seeing(m, mic: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(120))
+        #expect(calls().isEmpty)
+    }
+
+    @Test("mic-only mode is opt in")
+    func micOnlyOptIn() async {
+        let (m, calls) = monitor(config: [ConfigKey.micOnly: "true"])
+        seeing(m, mic: true)
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(calls() == [true])
+    }
+
+    /// Relaxing the camera requirement used to disable detection entirely.
+    @Test("with the camera not required, a calendar event corroborates")
+    func calendarCorroborates() async {
+        let (m, calls) = monitor(config: [ConfigKey.requireCamera: "false"])
+        m.setPresenceForTesting(Presence.State(microphone: true, calendarMeeting: true))
+        await m.decide(now: t0)
+        await m.decide(now: t0.addingTimeInterval(45))
+        #expect(calls() == [true])
+    }
+
+    @Test("the countdown is reported while waiting")
+    func countdown() async {
+        let (m, _) = monitor()
+        seeing(m, mic: true, camera: true)
+        await m.decide(now: t0)
+        #expect(m.waitingSeconds(now: t0.addingTimeInterval(20)) == 25)
+    }
+}

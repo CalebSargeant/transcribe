@@ -41,6 +41,9 @@ struct TranscribeApp: App {
                     // Detection is native so the microphone and camera checks
                     // are attributed to this app, not to whichever terminal
                     // launched the CLI. That is the whole reason for a bundle.
+                    // Recording itself goes through the CLI, which already
+                    // speaks obs-websocket.
+                    monitor.control = { start in await pipeline.controlRecording(start: start) }
                     monitor.start(
                         pollSeconds: settings.config.int(ConfigKey.pollSeconds, default: 5))
                 }

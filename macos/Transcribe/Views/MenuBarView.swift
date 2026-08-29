@@ -20,17 +20,19 @@ struct MenuBarView: View {
             Text("Signals: \(monitor.presence.describe)")
                 .font(.caption)
 
-            if monitor.status == .detected, let since = monitor.detectedSince {
-                Text(waitingText(since: since)).font(.caption)
+            if let seconds = monitor.waitingSeconds() {
+                Text("Recording starts in \(seconds)s").font(.caption)
+            }
+            if let error = monitor.lastError {
+                Text(error).font(.caption)
             }
 
             Divider()
 
             if monitor.status == .recording {
-                Button("Stop Recording") { stopRecording() }
+                Button("Stop Recording") { Task { await monitor.setRecording(false) } }
             } else {
-                Button("Record Now") { startRecording() }
-                    .disabled(pipeline.isRunning)
+                Button("Record Now") { Task { await monitor.setRecording(true) } }
             }
 
             Toggle("Pause Auto-Record", isOn: pausedBinding)
@@ -58,18 +60,4 @@ struct MenuBarView: View {
         Binding(get: { monitor.paused }, set: { monitor.paused = $0 })
     }
 
-    private func waitingText(since: Date) -> String {
-        let waited = Int(Date().timeIntervalSince(since))
-        return "Detected \(waited)s ago"
-    }
-
-    private func startRecording() {
-        pipeline.controlRecording(start: true)
-        monitor.markRecording(true)
-    }
-
-    private func stopRecording() {
-        pipeline.controlRecording(start: false)
-        monitor.markRecording(false)
-    }
 }

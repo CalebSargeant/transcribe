@@ -80,7 +80,7 @@ private struct AudioBar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(
-                    duration > 0
+                    Timecode.minutes(from: duration) != nil
                         ? "Audio only · \(Timecode.text(from: duration))"
                         : "Audio only"
                 )

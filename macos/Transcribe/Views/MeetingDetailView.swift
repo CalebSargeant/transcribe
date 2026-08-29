@@ -193,8 +193,8 @@ struct MeetingDetailView: View {
         if let date = folder.date {
             parts.append(date.formatted(date: .abbreviated, time: .shortened))
         }
-        if let seconds = record?.durationSeconds, seconds > 0 {
-            parts.append("\(Int(seconds / 60)) min")
+        if let seconds = record?.durationSeconds, let minutes = Timecode.minutes(from: seconds) {
+            parts.append("\(minutes) min")
         }
         let people = record?.speakingParticipants.count ?? 0
         if people > 0 { parts.append("\(people) voice\(people == 1 ? "" : "s")") }

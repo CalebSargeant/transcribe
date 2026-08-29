@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Watches for a meeting and drives recording, from the menu bar.
+/// Watches for a meeting and drives recording.
 ///
 /// Detection is native, so the microphone and camera checks are attributed to
 /// this app rather than to whichever terminal launched the CLI. Starting and
@@ -38,9 +38,24 @@ final class RecordingMonitor {
     private(set) var presence = Presence.State()
     private(set) var status: Status = .idle
     private(set) var detectedSince: Date?
+    private(set) var quietSince: Date?
+    private(set) var lastError: String?
+
     var paused = false {
-        didSet { if paused { detectedSince = nil } }
+        didSet {
+            if paused {
+                detectedSince = nil
+                status = .paused
+            } else if status == .paused {
+                status = .idle
+            }
+        }
     }
+
+    /// Starts and stops the recording, returning whether it worked. Injected
+    /// rather than reached for, so the monitor can be driven in a test without
+    /// an OBS instance.
+    var control: ((Bool) async -> Bool)?
 
     private var timer: Task<Void, Never>?
     private let settings: Settings
@@ -50,7 +65,8 @@ final class RecordingMonitor {
     }
 
     /// A meeting needs the microphone plus one corroborating signal, unless the
-    /// user has said the microphone alone is enough.
+    /// user has said the microphone alone is enough. The microphone on its own
+    /// fires on dictation, voice notes and Siri.
     ///
     /// Turning the camera requirement *off* used to make detection impossible:
     /// the old shape returned true only when the requirement was on and the
@@ -59,14 +75,22 @@ final class RecordingMonitor {
         guard presence.microphone else { return false }
         if settings.config.bool(ConfigKey.micOnly, default: false) { return true }
         if presence.camera { return true }
-        // With the camera not required, a calendar event corroborates instead.
-        if !settings.config.bool(ConfigKey.requireCamera, default: true),
-            settings.config.bool(ConfigKey.useCalendar, default: true),
-            presence.calendarMeeting
-        {
+        if settings.config.bool(ConfigKey.useCalendar, default: true), presence.calendarMeeting {
             return true
         }
         return false
+    }
+
+    /// How long a meeting must be detected before recording starts. Long enough
+    /// that a notification chime does not produce a file.
+    private var startDelay: Double {
+        Double(settings.config.int(ConfigKey.startAfter, default: 45))
+    }
+
+    /// How long it must be quiet before recording stops. Long enough that
+    /// swapping a headset does not chop a meeting in two.
+    private var stopDelay: Double {
+        Double(settings.config.int(ConfigKey.stopAfter, default: 120))
     }
 
     func start(pollSeconds: Int = 5) {
@@ -84,32 +108,100 @@ final class RecordingMonitor {
         timer = nil
     }
 
-    private func tick() async {
-        presence = await MeetingLibrary.offMainActor { Presence.current() }
+    /// One poll: read the signals, then start or stop if the clocks say so.
+    ///
+    /// The previous version returned early whenever `status == .recording`,
+    /// which stopped presence polling entirely and left a stuck "Recording"
+    /// with no way back. Presence is always read; only the decision is
+    /// conditional. It also never started anything: `readyToRecord` existed and
+    /// nothing called it, so "Pause Auto-Record" paused a feature that was not
+    /// running.
+    func tick(now: Date = Date()) async {
+        let includeCalendar = settings.config.bool(ConfigKey.useCalendar, default: true)
+        presence = await MeetingLibrary.offMainActor {
+            Presence.current(includeCalendar: includeCalendar)
+        }
+        await decide(now: now)
+    }
+
+    /// The state machine, separated from the polling so a test can drive it
+    /// with a clock rather than by waiting.
+    func decide(now: Date = Date()) async {
+        let active = meetingInProgress
+
+        if active {
+            quietSince = nil
+            if detectedSince == nil { detectedSince = now }
+        } else {
+            detectedSince = nil
+            if quietSince == nil { quietSince = now }
+        }
 
         guard !paused else {
             status = .paused
             return
         }
-        if status == .recording { return }
 
-        if meetingInProgress {
-            if detectedSince == nil { detectedSince = Date() }
-            status = .detected
+        if status == .recording {
+            if let quietSince, now.timeIntervalSince(quietSince) >= stopDelay {
+                await setRecording(false)
+            }
+            return
+        }
+
+        if let detectedSince, now.timeIntervalSince(detectedSince) >= startDelay {
+            guard enoughFreeSpace else {
+                lastError = "Not enough free space to start recording."
+                status = .detected
+                return
+            }
+            await setRecording(true)
+            return
+        }
+
+        status = active ? .detected : .idle
+    }
+
+    /// Refuse to start below the configured floor: a truncated recording on a
+    /// full disk loses the meeting entirely.
+    private var enoughFreeSpace: Bool {
+        let floor = Int64(settings.config.int(ConfigKey.minFreeGB, default: 10))
+        guard floor > 0 else { return true }
+        let watch =
+            settings.folder(ConfigKey.watch) ?? FileManager.default.homeDirectoryForCurrentUser
+        let free =
+            (try? watch.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
+            .volumeAvailableCapacity ?? Int.max
+        return Int64(free) >= floor * 1_000_000_000
+    }
+
+    /// Start or stop, and only claim the state the recorder actually reached.
+    func setRecording(_ recording: Bool) async {
+        guard let control else {
+            lastError = "No recorder is connected."
+            return
+        }
+        let succeeded = await control(recording)
+        if succeeded {
+            lastError = nil
+            status = recording ? .recording : (meetingInProgress ? .detected : .idle)
+            if !recording { detectedSince = nil }
         } else {
-            detectedSince = nil
-            status = .idle
+            // Reporting "Recording" for a start that failed is how the menu bar
+            // ends up in a state it can never leave.
+            lastError =
+                recording ? "Could not start the recording." : "Could not stop the recording."
+            status = meetingInProgress ? .detected : .idle
         }
     }
 
-    /// How long a meeting has been detected, against the configured delay.
-    var readyToRecord: Bool {
-        guard let detectedSince else { return false }
-        let delay = Double(settings.config.int(ConfigKey.startAfter, default: 45))
-        return Date().timeIntervalSince(detectedSince) >= delay
-    }
+    /// Set the signals directly, so the state machine can be driven in a test
+    /// without a microphone, a camera or a calendar.
+    func setPresenceForTesting(_ state: Presence.State) { presence = state }
 
-    func markRecording(_ isRecording: Bool) {
-        status = isRecording ? .recording : (meetingInProgress ? .detected : .idle)
+    /// Seconds until recording starts, for the menu bar.
+    func waitingSeconds(now: Date = Date()) -> Int? {
+        guard status == .detected, let detectedSince else { return nil }
+        return max(Int(startDelay - now.timeIntervalSince(detectedSince)), 0)
     }
 }

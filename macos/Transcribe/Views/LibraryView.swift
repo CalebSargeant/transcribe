@@ -147,7 +147,9 @@ struct LibraryView: View {
                     ForEach(groups, id: \.key) { group in
                         Section(group.key) {
                             ForEach(group.value) { folder in
-                                MeetingRow(folder: folder).tag(Selection.meeting(folder))
+                                MeetingRow(folder: folder)
+                                    .tag(Selection.meeting(folder))
+                                    .contextMenu { rowMenu(for: folder) }
                             }
                         }
                     }
@@ -249,6 +251,44 @@ struct LibraryView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .help("Rescan the meetings folder for new or changed meetings")
+        }
+    }
+
+    /// Right-click actions. Everything here is also reachable from the
+    /// toolbar or the detail view; a context menu is where a macOS user looks
+    /// first for something that acts on one row.
+    @ViewBuilder
+    private func rowMenu(for folder: MeetingFolder) -> some View {
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([folder.id])
+        }
+        Divider()
+        Button("Write Notes from Transcript") {
+            pipeline.notesFromTranscript(folder: folder.id)
+        }
+        .disabled(pipeline.isRunning)
+        Button("Categorise") {
+            pipeline.categorise(folders: [folder.id])
+        }
+        .disabled(pipeline.isRunning)
+        Divider()
+        Menu("Category") {
+            ForEach(tags.allTags, id: \.self) { tag in
+                Button {
+                    try? tags.toggle(tag, for: folder.id)
+                } label: {
+                    if tags.tags(for: folder.id).contains(where: {
+                        $0.caseInsensitiveCompare(tag) == .orderedSame
+                    }) {
+                        Label(tag, systemImage: "checkmark")
+                    } else {
+                        Text(tag)
+                    }
+                }
+            }
+            if tags.allTags.isEmpty {
+                Text("No categories yet").foregroundStyle(.secondary)
+            }
         }
     }
 

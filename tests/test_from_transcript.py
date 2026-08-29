@@ -1,6 +1,7 @@
 """Tests for rebuilding a meeting from a transcript that already exists."""
 
 import json
+from itertools import pairwise
 
 import pytest
 
@@ -100,7 +101,7 @@ def test_untimed_prose_is_split_into_sentences():
 def test_untimed_prose_is_spread_across_the_estimated_duration():
     segments = untimed_segments("One. Two. Three.")
     assert segments[0].start == 0
-    assert all(a.end == b.start for a, b in zip(segments, segments[1:]))
+    assert all(a.end == b.start for a, b in pairwise(segments))
 
 
 def test_untimed_prose_respects_a_known_duration():

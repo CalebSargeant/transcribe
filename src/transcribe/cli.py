@@ -352,7 +352,8 @@ def _print_usage():
     print("  transcribe autorecord             - Record meetings automatically via OBS")
     print("  transcribe setup-autorecord       - Install the auto-record agent")
     print("  transcribe notes <folders>        - Write notes from an existing transcript")
-    print("  transcribe categorise [folders]   - Label meetings with categories")
+    print("  transcribe categorise <folders>   - Label meetings with categories")
+    print("       --all          every meeting that has none yet")
     print("       --overwrite    replace categories that are already set")
     print("  transcribe record start|stop      - Drive an OBS recording")
     print("  transcribe voicememos [--import]  - List/import macOS Voice Memos")
@@ -446,10 +447,18 @@ def main():
 
         config = load_config()
         folders = [a for a in args[1:] if not a.startswith("--")]
+        if not folders and "--all" not in args:
+            # Running over the whole library is one LLM call per meeting, so it
+            # has to be asked for. Bare "categorise", and anything whose only
+            # arguments are flags, used to do exactly that.
+            print("Usage: transcribe categorise <meeting folder> [more folders]")
+            print("       transcribe categorise --all      every meeting without categories")
+            print("       --overwrite                      replace categories already set")
+            sys.exit(1)
         if not folders:
-            # No folders given means every meeting that has none yet.
             destination = Path(config["destination_directory"])
             folders = sorted(str(p) for p in destination.glob("*") if p.is_dir())
+            print(f"Categorising up to {len(folders)} meeting(s) in {destination}")
         sys.exit(categorise_folders(folders, config, overwrite="--overwrite" in args))
     elif command == "record":
         from .autorecord import (

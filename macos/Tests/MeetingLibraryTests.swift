@@ -439,6 +439,46 @@ struct ConfigWriteTests {
         #expect(values["keep"] == "me")
     }
 
+    /// The tightening applies to a file that already exists, not just a new
+    /// one. replaceItemAt preserves the original's metadata, so setting the
+    /// mode on the temporary alone left an existing 0644 config at 0644.
+    @Test("an existing loose-permissioned file is tightened")
+    func tightensExistingFile() throws {
+        let directory = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "transcribe-mode-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "config.yaml")
+
+        try Data("llm_provider: claude\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+
+        try Configuration.write(["anthropic_api_key": "sk-ant-secret"], to: url)
+
+        let mode = try #require(
+            FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)
+        #expect(mode.int16Value & 0o077 == 0)
+        #expect(Configuration.load(from: url).string("llm_provider") == "claude")
+    }
+
+    /// A list write goes through the same path and must tighten it too.
+    @Test("writing a list also tightens the file")
+    func listWriteTightens() throws {
+        let directory = URL(filePath: NSTemporaryDirectory())
+            .appending(path: "transcribe-mode2-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "config.yaml")
+        try Data("llm_provider: claude\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+
+        try Configuration.writeList("known_participants", ["Arno"], to: url)
+
+        let mode = try #require(
+            FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)
+        #expect(mode.int16Value & 0o077 == 0)
+    }
+
     /// The file holds API keys, so its mode matters as much as its contents.
     @Test("the written file is not world readable")
     func fileMode() throws {

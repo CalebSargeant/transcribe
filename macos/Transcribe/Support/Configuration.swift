@@ -104,7 +104,14 @@ struct Configuration: Sendable, Equatable {
             .appending(path: ".config.yaml.\(UUID().uuidString)")
         try Data(updated.utf8).write(to: temporary, options: .atomic)
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
-        _ = try manager.replaceItemAt(url, withItemAt: temporary)
+
+        let replaced = try manager.replaceItemAt(url, withItemAt: temporary) ?? url
+
+        // Setting the mode on the temporary is not enough: replaceItemAt
+        // preserves the *original* file's metadata, so an existing config that
+        // was 0644 stayed 0644 and the tightening was silently discarded. The
+        // file holds API keys, so the mode is set on the result too.
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: replaced.path)
     }
 
     /// Rewrite the lines for `changes`, append anything the file lacks.

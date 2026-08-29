@@ -54,6 +54,7 @@
 		0BBB12CCF31280211A4473B3 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		16E452B8A1AD0C9FF50F6886 /* Presence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Presence.swift; sourceTree = "<group>"; };
 		1ACC722A6349F4EA59287B7A /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
+		2032A8CED2DFAF1ABB2D6DEA /* Transcribe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Transcribe.entitlements; sourceTree = "<group>"; };
 		36A2EC20737E1BB609C5953C /* TokenList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenList.swift; sourceTree = "<group>"; };
 		3728B9017E90AE95A990BF04 /* TranscribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscribeApp.swift; sourceTree = "<group>"; };
 		3D5D1F6F0BA4814D510824ED /* Transcribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Transcribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -142,6 +143,7 @@
 			children = (
 				88C08D62FE4A43D7EC6B1D0D /* Assets.xcassets */,
 				0839CAAC7E233038B987C704 /* Info.plist */,
+				2032A8CED2DFAF1ABB2D6DEA /* Transcribe.entitlements */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -363,10 +365,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Transcribe/Resources/Transcribe.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Transcribe/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -450,10 +454,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Transcribe/Resources/Transcribe.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Transcribe/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

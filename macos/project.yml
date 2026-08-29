@@ -38,6 +38,8 @@ targets:
         # would still not let it drive the CLI.
         ENABLE_APP_SANDBOX: NO
         COMBINE_HIDPI_IMAGES: YES
+        CODE_SIGN_ENTITLEMENTS: Transcribe/Resources/Transcribe.entitlements
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
     scheme:
       # Without this the autocreated scheme runs zero tests and still reports
       # success.

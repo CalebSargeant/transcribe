@@ -135,13 +135,25 @@ struct LibraryView: View {
         case .loaded:
             VStack(spacing: 0) {
                 List(selection: $selection) {
-                    Section {
-                        Label("Action items", systemImage: "checklist")
-                            .badge(index.allActions.count)
-                            .tag(Selection.actions)
-                        Label("Recording queue", systemImage: "tray.full")
-                            .badge(queue.pending.count)
-                            .tag(Selection.queue)
+                    if !searching {
+                        Section {
+                            Label("Action items", systemImage: "checklist")
+                                .badge(index.allActions.count)
+                                .tag(Selection.actions)
+                            Label("Recording queue", systemImage: "tray.full")
+                                .badge(queue.pending.count)
+                                .tag(Selection.queue)
+                        }
+                    } else {
+                        Section {
+                            Text(
+                                filtered.isEmpty
+                                    ? "No meetings mention that"
+                                    : "\(filtered.count) meeting(s) mention that"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
                     }
 
                     ForEach(groups, id: \.key) { group in
@@ -182,7 +194,14 @@ struct LibraryView: View {
     }
 
     private var filtered: [MeetingFolder] {
-        library.folders.filter { folder in
+        // While searching, the sidebar narrows to the meetings the results are
+        // drawn from. A full list beside a filtered detail pane reads as though
+        // the search missed them.
+        let matches: Set<URL>? =
+            searching ? Set(index.search(search).map(\.folder)) : nil
+
+        return library.folders.filter { folder in
+            if let matches, !matches.contains(folder.id) { return false }
             guard let tagFilter else { return true }
             return tags.tags(for: folder.id)
                 .contains { $0.caseInsensitiveCompare(tagFilter) == .orderedSame }

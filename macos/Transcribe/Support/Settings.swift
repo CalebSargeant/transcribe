@@ -142,6 +142,43 @@ enum ConfigKey {
 
     // The app's own settings, stored alongside the CLI's so there is still one
     // file. The pipeline ignores keys it does not know.
+    // Read by the pipeline but rarely touched. Exposed on the Advanced tab so
+    // "every setting the CLI reads is configurable" is actually true.
+    static let vadThreshold = "whisper_vad_threshold"
+    static let suppressNonSpeech = "whisper_suppress_non_speech"
+    static let transcriptBudget = "transcript_token_budget"
+    static let boundaryBudget = "boundary_token_budget"
+    static let categoryMaxTokens = "category_max_tokens"
+    static let notesTemperature = "notes_temperature"
+    static let diarizationShift = "diarization_window_shift_ratio"
+    static let diarizationMinOn = "diarization_min_duration_on"
+    static let diarizationMinOff = "diarization_min_duration_off"
+    static let diarizationModelDir = "diarization_model_dir"
+    static let videoExtensions = "video_extensions"
+    static let ignoredDevices = "autorecord_ignored_devices"
+    static let ignoredCameras = "autorecord_ignored_cameras"
+    static let llmTimeout = "llm_timeout_seconds"
+    static let llmRetries = "llm_max_retries"
+    static let icloudBaseURL = "icloud_base_url"
+
+    /// Keys the app builds a dedicated control for. Anything in the file that
+    /// is not here shows up in Advanced ▸ Other settings, so a key added to the
+    /// pipeline cannot silently become unreachable.
+    static let covered: Set<String> = [
+        destination, watch, provider, anthropicKey, anthropicModel, openAIKey, openAIModel,
+        openAIBaseURL, whisperModel, whisperLanguage, whisperVAD, whisperAutoPrompt,
+        whisperThreads, whisperPrompt, diarization, diarizationThreshold, diarizationThreads,
+        splitMeetings, splitVideo, meetingGap, minMeeting, moveSource, calendar, calendarMargin,
+        calendarSource, requireCamera, useCalendar, micOnly, startAfter, stopAfter, minFreeGB,
+        obsHost, obsPort, obsPassword, slackBotToken, slackChannel, slackWebhook, meetingMode,
+        knownParticipants, notesFolder, remindersList, exportOnGenerate, pollSeconds,
+        notesMaxTokens, speakerMaxTokens, boundaryMaxTokens, vadThreshold, suppressNonSpeech,
+        transcriptBudget, boundaryBudget, categoryMaxTokens, notesTemperature, diarizationShift,
+        diarizationMinOn, diarizationMinOff, diarizationModelDir, videoExtensions,
+        ignoredDevices, ignoredCameras, llmTimeout, llmRetries, icloudBaseURL,
+        "anthropic_auth_token",
+    ]
+
     static let notesFolder = "apple_notes_folder"
     static let remindersList = "apple_reminders_list"
     static let exportOnGenerate = "apple_export_automatically"

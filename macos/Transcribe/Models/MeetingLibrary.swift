@@ -16,6 +16,13 @@ struct MeetingFolder: Identifiable, Hashable, Sendable {
     /// Nil until the folder has been listed. See ``MeetingLibrary/contents(of:)``.
     var contents: Contents?
 
+    // Identity is the folder, not its contents. The synthesised conformance
+    // would include `contents`, and since the sidebar tags rows with the whole
+    // value, filling that in mid-scan changes the tag and silently drops the
+    // user's selection.
+    static func == (lhs: MeetingFolder, rhs: MeetingFolder) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
     struct Contents: Hashable, Sendable {
         var notesJSON: URL?
         var transcriptText: URL?
@@ -90,7 +97,7 @@ final class MeetingLibrary {
     /// catch and no error to report -- measured against an iCloud Drive folder
     /// that the same code lists in 0.04s from a terminal that holds the grant.
     /// Without a deadline the window simply spins forever.
-    static let listingDeadline = Duration.seconds(4)
+    nonisolated static let listingSeconds: Double = 4
 
     private(set) var folders: [MeetingFolder] = []
     private(set) var phase: Phase = .idle
@@ -155,21 +162,45 @@ final class MeetingLibrary {
         enrichTask = Task { await enrich(id: id) }
     }
 
+    /// Resumes once, for whichever of the scan and the deadline lands first.
+    ///
+    /// `@unchecked Sendable` with an explicit lock: the two callers are on
+    /// different queue threads, and a continuation resumed twice is a crash.
+    private final class FirstWins: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<[MeetingFolder]?, Never>?
+
+        init(_ continuation: CheckedContinuation<[MeetingFolder]?, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(_ value: [MeetingFolder]?) {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume(returning: value)
+        }
+    }
+
     /// The first listing, or nil if it did not come back in time.
     ///
-    /// The blocked thread cannot be cancelled -- it is stuck in a syscall -- so
-    /// this abandons it rather than waiting. One stranded thread is a far better
-    /// outcome than a window that never draws, and the user gets a way forward.
+    /// Not a task group. Leaving a `withTaskGroup` body implicitly awaits every
+    /// remaining child, and `cancelAll()` only *requests* cancellation -- the
+    /// scan is parked in a continuation around a blocking syscall and has no
+    /// cancellation handler, so the group waited for it anyway and the deadline
+    /// did nothing at all. Measured: a 2s deadline against a 10s block returned
+    /// after 10s.
+    ///
+    /// The blocked thread cannot be cancelled, so it is abandoned. One stranded
+    /// thread is a far better outcome than a window that never draws.
     private nonisolated static func scanWithDeadline(root: URL) async -> [MeetingFolder]? {
-        await withTaskGroup(of: [MeetingFolder]?.self) { group in
-            group.addTask { await offMainActor { scan(root: root) } }
-            group.addTask {
-                try? await Task.sleep(for: listingDeadline)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        await withCheckedContinuation { continuation in
+            let once = FirstWins(continuation)
+            // The queue is concurrent, so the deadline is not queued behind the
+            // scan it is timing.
+            ioQueue.async { once.resume(scan(root: root)) }
+            ioQueue.asyncAfter(deadline: .now() + listingSeconds) { once.resume(nil) }
         }
     }
 
@@ -214,8 +245,10 @@ final class MeetingLibrary {
 
     /// The files in one folder, listing it now if the background pass has not
     /// reached it yet. Selecting a meeting must not wait for the queue.
-    func contents(of folder: MeetingFolder) async -> MeetingFolder.Contents {
-        if let contents = folder.contents { return contents }
+    func contents(of folder: MeetingFolder, refresh: Bool = false) async -> MeetingFolder.Contents {
+        // `refresh` skips the cache: after the pipeline writes to a folder, the
+        // cached listing describes what was there before it ran.
+        if !refresh, let contents = folder.contents { return contents }
         let url = folder.id
         let contents = await Self.offMainActor { Self.listContents(of: url) }
         if let position = folders.firstIndex(where: { $0.id == url }) {

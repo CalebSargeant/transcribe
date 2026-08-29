@@ -21,6 +21,7 @@ struct MeetingDetailView: View {
     @State private var tab: Tab = .notes
     @State private var playback = PlaybackController()
     @State private var showPlayer = true
+    @State private var openedMedia: URL?
 
     private enum Tab: String, CaseIterable, Identifiable {
         case notes = "Notes"
@@ -127,6 +128,12 @@ struct MeetingDetailView: View {
         }
         .task {
             await load()
+        }
+        .onChange(of: pipeline.state) { _, new in
+            // The pipeline has just rewritten this folder. Without this the
+            // notes it produced are invisible until you click away and back,
+            // which makes the feature look broken when it worked.
+            if case .finished = new { Task { await load(refresh: true) } }
         }
     }
 
@@ -257,14 +264,22 @@ struct MeetingDetailView: View {
         )
     }
 
-    private func load() async {
-        loading = true
+    private func load(refresh: Bool = false) async {
+        // A refresh keeps the current content on screen rather than flashing a
+        // spinner over notes the user is reading.
+        if !refresh { loading = true }
         defer { loading = false }
 
         // The background pass may not have reached this folder yet, so listing
         // it here is what keeps selection responsive.
-        let contents = await library.contents(of: folder)
+        let contents = await library.contents(of: folder, refresh: refresh)
         self.contents = contents
+        if refresh {
+            record = nil
+            legacyTranscript = nil
+            legacySummary = nil
+            loadError = nil
+        }
 
         do {
             record = try await MeetingLibrary.loadRecord(contents.notesJSON)
@@ -280,10 +295,15 @@ struct MeetingDetailView: View {
         }
 
         // Resolved after the record is read, since the fallback comes from it.
-        await playback.open(playableMedia)
+        // Reopening the same file would restart playback under the user, so it
+        // only happens when the file actually changed.
+        if playableMedia != openedMedia {
+            openedMedia = playableMedia
+            await playback.open(playableMedia)
+        }
 
         // Only now is there a player to seek.
-        if let seekOnOpen {
+        if let seekOnOpen, !refresh {
             tab = .transcript
             seek(to: seekOnOpen)
         }

@@ -21,6 +21,29 @@ final class Pipeline {
     private(set) var output: String = ""
     private var task: Task<Void, Never>?
 
+    /// Holds the running child so cancelling can actually kill it.
+    ///
+    /// `@unchecked Sendable` behind a lock: it is set on the queue thread that
+    /// launched the process and read from the main actor when cancelling.
+    private final class ProcessBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+
+        func adopt(_ process: Process) {
+            lock.lock(); self.process = process; lock.unlock()
+        }
+
+        func terminate() {
+            lock.lock(); let running = process; lock.unlock()
+            guard let running, running.isRunning else { return }
+            running.terminate()
+        }
+
+        func release() { lock.lock(); process = nil; lock.unlock() }
+    }
+
+    private var box = ProcessBox()
+
     /// Where the CLI might be. A Homebrew install and a local checkout put it
     /// in different places, and the app must not care which the user has.
     static func locate() -> URL? {
@@ -37,7 +60,14 @@ final class Pipeline {
 
     var isRunning: Bool { if case .running = state { return true } else { return false } }
 
+    /// Stop the running command.
+    ///
+    /// Cancelling the Swift task is not enough: the `Process` runs whisper and
+    /// LLM calls for minutes and knows nothing about task cancellation, so it
+    /// carried on while the buttons re-enabled and a second run could be
+    /// started over the same folder. The child is signalled too.
     func cancel() {
+        box.terminate()
         task?.cancel()
         task = nil
         state = .idle
@@ -125,14 +155,23 @@ final class Pipeline {
         state = .running(label)
         output = ""
 
+        let box = ProcessBox()
+        self.box = box
         task = Task { [weak self] in
-            let result = await Self.execute(tool: tool, arguments: arguments)
+            let result = await Self.execute(tool: tool, arguments: arguments, box: box)
+            box.release()
             guard let self, !Task.isCancelled else { return }
             self.output = result.output
-            self.state =
-                result.status == 0
-                ? .finished(label)
-                : .failed("\(label) failed (exit \(result.status)). See the log below.")
+            switch result.status {
+            case 0:
+                self.state = .finished(label)
+            case SIGTERM, SIGKILL, -SIGTERM, -SIGKILL:
+                // Terminated by cancel(), which already set .idle.
+                self.state = .idle
+            default:
+                self.state = .failed(
+                    "\(label) failed (exit \(result.status)). See the log below.")
+            }
         }
     }
 
@@ -142,7 +181,7 @@ final class Pipeline {
     /// child that fills the pipe buffer while the parent waits on `exit` is a
     /// deadlock rather than a slow run.
     private nonisolated static func execute(
-        tool: URL, arguments: [String]
+        tool: URL, arguments: [String], box: ProcessBox
     ) async -> (status: Int32, output: String) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -160,6 +199,7 @@ final class Pipeline {
                 process.standardOutput = pipe
                 process.standardError = pipe
 
+                box.adopt(process)
                 do {
                     try process.run()
                 } catch {

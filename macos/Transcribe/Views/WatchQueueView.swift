@@ -134,7 +134,7 @@ struct PipelineStatusBar: View {
                     Button("Cancel") { pipeline.cancel() }
                 case .finished(let label):
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("\(label) finished. Refresh to see it.").font(.callout)
+                    Text("\(label) finished.").font(.callout)
                     Spacer()
                 case .failed(let message):
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)

@@ -15,6 +15,7 @@ struct SettingsView: View {
             TranscriptionSettings().tabItem { Label("Transcription", systemImage: "waveform") }
             RecordingSettings().tabItem { Label("Recording", systemImage: "record.circle") }
             SharingSettings().tabItem { Label("Sharing", systemImage: "square.and.arrow.up") }
+            AdvancedSettings().tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
         .frame(width: 540)
         .overlay(alignment: .bottom) {
@@ -454,5 +455,125 @@ private struct SharingSettings: View {
         }
         .formStyle(.grouped)
         .task { await export.loadReminderLists() }
+    }
+}
+
+
+// MARK: - Advanced
+
+/// The settings that exist, are read by the pipeline, and are rarely touched.
+///
+/// Everything here has a sensible default and most people should never open
+/// this tab. It exists so that "every setting the CLI reads is configurable" is
+/// a true statement rather than an aspiration, and so a key added to the
+/// pipeline shows up somewhere instead of silently becoming unreachable.
+private struct AdvancedSettings: View {
+    @Environment(Settings.self) private var settings
+
+    /// Anything in the file the app has no dedicated control for.
+    private var uncovered: [String] {
+        settings.config.values.keys
+            .filter { !ConfigKey.covered.contains($0) }
+            .sorted()
+    }
+
+    var body: some View {
+        Form {
+            Section("Pipeline") {
+                Toggle("Split recordings into meetings", isOn: settings.flag(ConfigKey.meetingMode, default: true))
+                    .help("Off writes one flat set of notes per recording.")
+                Picker("Calendar source", selection: settings.text(ConfigKey.calendarSource, default: "macos")) {
+                    Text("macOS Calendar").tag("macos")
+                }
+                .help("Google and Microsoft 365 sources are tracked as open issues.")
+                LabeledContent("Detection poll") {
+                    Stepper(
+                        "\(settings.config.int(ConfigKey.pollSeconds, default: 5))s",
+                        value: settings.number(ConfigKey.pollSeconds, default: 5), in: 1...60)
+                }
+            }
+
+            Section("Model output budgets") {
+                budget("Notes", ConfigKey.notesMaxTokens, 16000)
+                budget("Speaker naming", ConfigKey.speakerMaxTokens, 16000)
+                budget("Meeting boundaries", ConfigKey.boundaryMaxTokens, 8000)
+                budget("Categories", ConfigKey.categoryMaxTokens, 2000)
+                Text("Reasoning models bill their thinking as output. Too low and they return nothing at all.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Input budgets") {
+                budget("Transcript sent for notes", ConfigKey.transcriptBudget, 120_000)
+                budget("Transcript sent for boundaries", ConfigKey.boundaryBudget, 120_000)
+                LabeledContent("Request timeout") {
+                    Stepper(
+                        "\(settings.config.int(ConfigKey.llmTimeout, default: 600))s",
+                        value: settings.number(ConfigKey.llmTimeout, default: 600),
+                        in: 30...3600, step: 30)
+                }
+                LabeledContent("Retries") {
+                    Stepper(
+                        "\(settings.config.int(ConfigKey.llmRetries, default: 2))",
+                        value: settings.number(ConfigKey.llmRetries, default: 2), in: 0...10)
+                }
+            }
+
+            Section("Transcription detail") {
+                LabeledContent("Voice activity threshold") {
+                    Slider(
+                        value: settings.decimal(ConfigKey.vadThreshold, default: 0.5),
+                        in: 0.1...0.9, step: 0.05)
+                }
+                .help("Higher discards more quiet audio as silence.")
+                Toggle("Suppress non-speech tokens", isOn: settings.flag(ConfigKey.suppressNonSpeech, default: true))
+                    .help("Drops [MUSIC] and similar markers from the transcript.")
+            }
+
+            Section("Speaker separation detail") {
+                LabeledContent("Window shift") {
+                    Slider(
+                        value: settings.decimal(ConfigKey.diarizationShift, default: 0.25),
+                        in: 0.05...0.5, step: 0.05)
+                }
+                .help("Lower is slower for no measurable gain: 0.1 ran at 10.9x realtime, 0.25 at 28.9x.")
+                TextField("Model directory", text: settings.text(ConfigKey.diarizationModelDir),
+                          prompt: Text("downloaded automatically"))
+            }
+
+            Section("File handling") {
+                TokenList(
+                    key: ConfigKey.videoExtensions, prompt: ".mkv",
+                    help: "Extensions the watcher treats as recordings. Empty uses the built-in list.")
+                TokenList(
+                    key: ConfigKey.ignoredDevices, prompt: "Some Virtual Mic",
+                    help: "Inputs that report as running whenever their host app is open. Empty uses the built-in list.")
+                TokenList(
+                    key: ConfigKey.ignoredCameras, prompt: "Some Virtual Camera",
+                    help: "Cameras to ignore when deciding whether a meeting is happening.")
+            }
+
+            if !uncovered.isEmpty {
+                Section("Other settings in the file") {
+                    ForEach(uncovered, id: \.self) { key in
+                        TextField(key, text: settings.text(key))
+                    }
+                    Text("Keys this app has no dedicated control for. Edited as written.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func budget(_ title: String, _ key: String, _ fallback: Int) -> some View {
+        LabeledContent(title) {
+            TextField(
+                title, value: settings.number(key, default: fallback),
+                format: .number.grouping(.never)
+            )
+            .labelsHidden()
+            .frame(width: 100)
+        }
     }
 }

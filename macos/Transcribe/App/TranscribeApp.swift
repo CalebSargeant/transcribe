@@ -47,13 +47,11 @@ struct TranscribeApp: App {
         }
         .windowToolbarStyle(.unified)
         .commands {
-            // The app browses a folder; it has no documents to open.
-            CommandGroup(replacing: .newItem) {}
 
             // A native app is keyboard-drivable. Without these the only way to
             // reach anything is the mouse.
             CommandGroup(after: .toolbar) {
-                Button("Meetings") { commands.show(.actions) }
+                Button("Meetings") { commands.show(.meetings) }
                     .keyboardShortcut("1", modifiers: .command)
                 Button("Action Items") { commands.show(.actions) }
                     .keyboardShortcut("2", modifiers: .command)

@@ -49,12 +49,21 @@ final class RecordingMonitor {
         self.settings = settings
     }
 
-    /// A meeting needs the microphone plus one corroborating signal. The mic
-    /// alone fires on dictation, voice notes and Siri.
+    /// A meeting needs the microphone plus one corroborating signal, unless the
+    /// user has said the microphone alone is enough.
+    ///
+    /// Turning the camera requirement *off* used to make detection impossible:
+    /// the old shape returned true only when the requirement was on and the
+    /// camera was in use, so relaxing it removed the only route to true.
     var meetingInProgress: Bool {
         guard presence.microphone else { return false }
         if settings.config.bool(ConfigKey.micOnly, default: false) { return true }
-        if settings.config.bool(ConfigKey.requireCamera, default: true), presence.camera {
+        if presence.camera { return true }
+        // With the camera not required, a calendar event corroborates instead.
+        if !settings.config.bool(ConfigKey.requireCamera, default: true),
+            settings.config.bool(ConfigKey.useCalendar, default: true),
+            presence.calendarMeeting
+        {
             return true
         }
         return false

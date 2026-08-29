@@ -8,6 +8,10 @@ struct IndexedMeeting: Codable, Sendable, Identifiable {
     let title: String
     let date: Date?
     let isLegacy: Bool
+    /// When the file this entry was built from last changed. Without it a
+    /// reprocessed meeting keeps its old index entry forever, and the stale
+    /// entry is written straight back to the cache.
+    let stamp: Date?
     /// Everything searchable, already lowercased. Held separately from the
     /// lines so a miss costs one `contains` rather than a walk of every line.
     let haystack: String
@@ -51,9 +55,9 @@ struct IndexedMeeting: Codable, Sendable, Identifiable {
 /// Everything the library holds, searchable.
 ///
 /// Built in the background and cached, because reading 100+ transcripts off
-/// iCloud is slow enough to be worth doing once. The cache is keyed by each
-/// folder's modification date, so a reprocessed meeting reindexes and the rest
-/// do not.
+/// iCloud is slow enough to be worth doing once. Each entry records the
+/// modification date of the file it was built from, so a reprocessed meeting
+/// reindexes and the rest do not.
 @MainActor
 @Observable
 final class MeetingIndex {
@@ -70,7 +74,7 @@ final class MeetingIndex {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appending(path: "com.magmamoose.transcribe")
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base.appending(path: "index.json")
+        return base.appending(path: "index-v2.json")
     }()
 
     /// Every action item across the library, newest meeting first.
@@ -112,8 +116,15 @@ final class MeetingIndex {
 
         task = Task { [weak self] in
             let stale = await MeetingIndex.loadCache()
-            let existing = Dictionary(
-                uniqueKeysWithValues: (cached.isEmpty ? stale : cached).map { ($0.folder, $0) })
+            // Merged, not either/or: an interrupted build leaves a handful of
+            // in-memory entries, and preferring those would throw away the
+            // hundreds on disk. `uniquingKeysWith` also avoids the trap that
+            // `uniqueKeysWithValues` raises on a duplicate folder URL.
+            var merged = Dictionary(stale.map { ($0.folder, $0) }, uniquingKeysWith: { _, new in new })
+            for meeting in cached { merged[meeting.folder] = meeting }
+            // Immutable before the loop below captures it; a captured `var` in
+            // concurrent code is a Swift 6 error.
+            let existing = merged
 
             var built: [IndexedMeeting] = []
             let total = Double(folders.count)
@@ -147,7 +158,16 @@ final class MeetingIndex {
     ) -> IndexedMeeting {
         let contents = folder.contents ?? MeetingLibrary.listContents(of: folder.id)
 
-        if let cached, cached.isLegacy == contents.isLegacy, !cached.haystack.isEmpty {
+        let source = contents.notesJSON ?? contents.transcriptText
+        let stamp = source.flatMap {
+            try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        }
+
+        // Reuse only when the source file has not changed since. The previous
+        // test compared `isLegacy` and a non-empty haystack, which is always
+        // true because the haystack contains the folder name, so nothing was
+        // ever reindexed.
+        if let cached, let stamp, cached.stamp == stamp, cached.isLegacy == contents.isLegacy {
             return cached
         }
 
@@ -207,6 +227,7 @@ final class MeetingIndex {
             title: title,
             date: folder.date,
             isLegacy: contents.isLegacy,
+            stamp: stamp,
             haystack: haystack,
             lines: lines,
             actions: actions

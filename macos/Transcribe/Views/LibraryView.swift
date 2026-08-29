@@ -16,6 +16,7 @@ struct LibraryView: View {
     /// Set when a search result is opened, so the meeting can jump straight to
     /// the line that matched.
     @State private var pendingSeek: Double?
+    @State private var lastMeeting: MeetingFolder?
 
     /// What the detail pane is showing. A meeting is one case among several so
     /// the action list and the queue are first-class destinations rather than
@@ -46,11 +47,25 @@ struct LibraryView: View {
         // Menu commands live in the App scene and cannot reach this view's
         // state directly, so they raise a token the view acts on.
         .onChange(of: commands.refreshToken) { Task { await refresh() } }
-        .onChange(of: commands.destination) { _, new in
-            if let new {
-                selection = new == .actions ? .actions : .queue
-                search = ""
+        .onChange(of: commands.request) { _, request in
+            guard let request else { return }
+            search = ""
+            switch request.destination {
+            case .meetings:
+                // Never nil: that would drop the user on the empty state.
+                if case .meeting = selection {} else {
+                    selection = lastMeeting.map(Selection.meeting)
+                        ?? library.folders.first.map(Selection.meeting)
+                }
+            case .actions:
+                selection = .actions
+            case .queue:
+                selection = .queue
             }
+        }
+        .onChange(of: selection) { _, new in
+            // Remembered so Cmd-1 can come back to where you were.
+            if case .meeting(let folder) = new { lastMeeting = folder }
         }
         .onChange(of: pipeline.state) { _, new in
             // A finished run has written new files; the library, tags and

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreAudio
+import EventKit
 import Foundation
 
 /// Whether the microphone and camera are in use, right now.
@@ -16,13 +17,17 @@ enum Presence {
     struct State: Equatable, Sendable {
         var microphone = false
         var camera = false
+        var calendarMeeting = false
         var microphoneNames: [String] = []
         var cameraNames: [String] = []
+        var calendarTitle: String?
 
         var describe: String {
             var parts: [String] = []
-            parts.append(microphone ? "mic on (\(microphoneNames.joined(separator: ", ")))" : "mic off")
+            parts.append(
+                microphone ? "mic on (\(microphoneNames.joined(separator: ", ")))" : "mic off")
             parts.append(camera ? "camera on (\(cameraNames.joined(separator: ", ")))" : "camera off")
+            if let calendarTitle { parts.append("in “\(calendarTitle)”") }
             return parts.joined(separator: " · ")
         }
     }
@@ -44,13 +49,40 @@ enum Presence {
         return list.contains { lowered.contains($0) }
     }
 
-    static func current() -> State {
+    static func current(includeCalendar: Bool = true) -> State {
         var state = State()
         state.microphoneNames = runningMicrophones()
         state.microphone = !state.microphoneNames.isEmpty
         state.cameraNames = runningCameras()
         state.camera = !state.cameraNames.isEmpty
+        if includeCalendar, let event = currentCalendarEvent() {
+            state.calendarMeeting = true
+            state.calendarTitle = event
+        }
         return state
+    }
+
+    /// The title of an event happening right now, if the calendar is readable.
+    ///
+    /// `authorizationStatus` never prompts, so a user who has not granted
+    /// calendar access simply gets no calendar signal rather than a dialog
+    /// every five seconds.
+    static func currentCalendarEvent() -> String? {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
+        let store = EKEventStore()
+        let now = Date()
+        let predicate = store.predicateForEvents(
+            withStart: now.addingTimeInterval(-3600),
+            end: now.addingTimeInterval(3600),
+            calendars: nil
+        )
+        return store.events(matching: predicate)
+            .first { event in
+                guard !event.isAllDay, let start = event.startDate, let end = event.endDate
+                else { return false }
+                return start <= now && end >= now
+            }?
+            .title
     }
 
     // MARK: - Microphone

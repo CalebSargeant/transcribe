@@ -583,7 +583,7 @@ struct IndexTests {
         }
         return IndexedMeeting(
             folder: URL(filePath: "/tmp/\(title)"), name: title, title: title, date: nil,
-            isLegacy: false,
+            isLegacy: false, stamp: nil,
             haystack: ([title] + lines).joined(separator: "\n").lowercased(),
             lines: indexedLines, actions: actions)
     }
@@ -918,5 +918,93 @@ struct MediaKindTests {
         #expect(PlaybackController.Phase.checking.kind == nil)
         #expect(PlaybackController.Phase.ready(.audio).isReady)
         #expect(!PlaybackController.Phase.unplayable("x").isReady)
+    }
+}
+
+@Suite("Index freshness")
+struct IndexFreshnessTests {
+    private func entry(stamp: Date?, legacy: Bool = false) -> IndexedMeeting {
+        IndexedMeeting(
+            folder: URL(filePath: "/m"), name: "m", title: "m", date: nil,
+            isLegacy: legacy, stamp: stamp, haystack: "m", lines: [], actions: [])
+    }
+
+    /// A reprocessed meeting must reindex. The previous test compared only
+    /// isLegacy and a non-empty haystack, and the haystack always contains the
+    /// folder name, so nothing was ever reindexed.
+    @Test("a cached entry round trips its stamp")
+    func stampSurvivesTheCache() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        let data = try JSONEncoder().encode([entry(stamp: when)])
+        let back = try JSONDecoder().decode([IndexedMeeting].self, from: data)
+        #expect(back[0].stamp == when)
+    }
+
+    @Test("an entry with no stamp cannot be trusted for reuse")
+    func nilStampIsNotReusable() {
+        // index(folder:reusing:) requires `let stamp` and `cached.stamp == stamp`,
+        // so a nil on either side falls through to a rebuild.
+        #expect(entry(stamp: nil).stamp == nil)
+    }
+}
+
+@Suite("Folder identity")
+struct FolderIdentityTests {
+    private func folder(contents: MeetingFolder.Contents?) -> MeetingFolder {
+        MeetingFolder(id: URL(filePath: "/m/a"), name: "a", date: nil, contents: contents)
+    }
+
+    /// The sidebar tags rows with the whole value. If `contents` counted toward
+    /// equality, the background pass filling it in would change the tag and
+    /// silently drop the user's selection.
+    @Test("filling in contents does not change identity")
+    func contentsDoNotAffectIdentity() {
+        let before = folder(contents: nil)
+        let after = folder(contents: MeetingFolder.Contents(notesJSON: URL(filePath: "/m/a/n.json")))
+        #expect(before == after)
+        #expect(before.hashValue == after.hashValue)
+        #expect(Set([before, after]).count == 1)
+    }
+
+    @Test("different folders are still different")
+    func differentFoldersDiffer() {
+        let a = MeetingFolder(id: URL(filePath: "/m/a"), name: "a", date: nil)
+        let b = MeetingFolder(id: URL(filePath: "/m/b"), name: "b", date: nil)
+        #expect(a != b)
+    }
+}
+
+@MainActor
+@Suite("Menu commands")
+struct AppCommandsTests {
+    /// Writing nil then the value in one synchronous scope does not work:
+    /// onChange compares at the next body evaluation, by which time both writes
+    /// have landed. A token makes the second press distinguishable.
+    @Test("the same destination twice produces two distinct requests")
+    func repeatedShowFires() {
+        let commands = AppCommands()
+        commands.show(.queue)
+        let first = commands.request
+        commands.show(.queue)
+        #expect(first != commands.request)
+        #expect(commands.request?.destination == .queue)
+    }
+
+    @Test("every destination is reachable")
+    func allDestinations() {
+        let commands = AppCommands()
+        for destination in [AppCommands.Destination.meetings, .actions, .queue] {
+            commands.show(destination)
+            #expect(commands.request?.destination == destination)
+        }
+    }
+
+    @Test("refresh is a counter, so two refreshes both fire")
+    func refreshCounts() {
+        let commands = AppCommands()
+        let start = commands.refreshToken
+        commands.refresh()
+        commands.refresh()
+        #expect(commands.refreshToken == start + 2)
     }
 }

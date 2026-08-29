@@ -31,12 +31,7 @@ struct IndexedMeeting: Codable, Sendable, Identifiable {
         let title: String
         let detail: String
 
-        var assignedOwner: String? {
-            let trimmed = owner.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, trimmed.caseInsensitiveCompare("Unassigned") != .orderedSame
-            else { return nil }
-            return trimmed
-        }
+        var assignedOwner: String? { Owner.named(owner) }
     }
 
     /// Lines matching `query`, with enough context to be worth reading.

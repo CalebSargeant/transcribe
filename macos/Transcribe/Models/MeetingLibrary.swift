@@ -276,12 +276,6 @@ final class MeetingLibrary {
 
     // MARK: - Scanning
 
-    // nonisolated because the scan runs off the main actor. Without it this is a
-    // warning today and a hard error under the Swift 6 language mode.
-    private nonisolated static let mediaExtensions: Set<String> = [
-        "mov", "mp4", "m4a", "qta", "wav", "mp3",
-    ]
-
     /// Lists the root only. No per-folder IO, so this stays fast on a network
     /// or cloud volume.
     nonisolated static func scan(root: URL) -> [MeetingFolder] {
@@ -336,14 +330,7 @@ final class MeetingLibrary {
             summaryText: files.first { $0.lastPathComponent == "summary.txt" }
                 ?? bySuffix("_summary.txt"),
             notesHTML: files.first { $0.lastPathComponent == "notes.html" },
-            media: files
-                .filter { mediaExtensions.contains($0.pathExtension.lowercased()) }
-                // Prefer video over the extracted audio sitting beside it.
-                .sorted {
-                    ($0.pathExtension.lowercased() == "wav" ? 1 : 0)
-                        < ($1.pathExtension.lowercased() == "wav" ? 1 : 0)
-                }
-                .first
+            media: Media.preferred(from: files)
         )
     }
 

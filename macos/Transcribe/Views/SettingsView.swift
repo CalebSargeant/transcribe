@@ -105,6 +105,7 @@ private struct FolderRow: View {
                     Image(systemName: "arrow.up.forward.app")
                 }
                 .disabled(settings.folder(key) == nil)
+                .accessibilityLabel("Open \(title.lowercased()) folder in Finder")
                 .help("Open this folder in Finder")
             }
             Text(settings.folder(key)?.path(percentEncoded: false) ?? "Not set")

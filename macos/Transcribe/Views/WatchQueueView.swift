@@ -110,6 +110,7 @@ private struct RecordingRow: View {
             } label: {
                 Image(systemName: "arrow.up.forward.app")
             }
+            .accessibilityLabel("Show in Finder")
             .help("Show this file in Finder")
         }
         .padding(.vertical, 3)

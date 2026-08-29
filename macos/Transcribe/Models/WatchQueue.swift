@@ -31,13 +31,13 @@ final class WatchQueue {
 
     private var loadID = 0
 
-    private nonisolated static let mediaExtensions: Set<String> = [
-        "mov", "mp4", "m4a", "qta", "wav", "mp3", "avi", "mkv", "m4v",
-    ]
-
     var pending: [PendingRecording] { recordings.filter { !$0.isProcessed } }
 
-    func load(watch: URL?, index: [IndexedMeeting], library: [MeetingFolder]) async {
+    /// Cached source-file basenames, so a refresh does not re-read and re-parse
+    /// every meeting's notes.json. Keyed by folder, dropped when it disappears.
+    private var sourceCache: [URL: String] = [:]
+
+    func load(watch: URL?, library: [MeetingFolder]) async {
         loadID += 1
         let id = loadID
 
@@ -54,11 +54,13 @@ final class WatchQueue {
         // themselves rather than guessed from names, because the pipeline
         // renames a meeting after what was said in it.
         let folders = library.map(\.id)
-        let found = await MeetingLibrary.offMainActor {
-            Self.scan(watch: watch, meetingFolders: folders)
+        let known = sourceCache
+        let (found, sources) = await MeetingLibrary.offMainActor {
+            Self.scan(watch: watch, meetingFolders: folders, cachedSources: known)
         }
 
         guard id == loadID else { return }
+        sourceCache = sources
         recordings = found
         message =
             found.isEmpty
@@ -66,7 +68,9 @@ final class WatchQueue {
             : nil
     }
 
-    nonisolated static func scan(watch: URL, meetingFolders: [URL]) -> [PendingRecording] {
+    nonisolated static func scan(
+        watch: URL, meetingFolders: [URL], cachedSources: [URL: String] = [:]
+    ) -> (recordings: [PendingRecording], sources: [URL: String]) {
         let manager = FileManager.default
         guard
             let entries = try? manager.contentsOfDirectory(
@@ -74,24 +78,33 @@ final class WatchQueue {
                 includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
-        else { return [] }
+        else { return ([], cachedSources) }
 
         // basename of every source_file the library records, mapped to the
-        // meeting folders it produced.
+        // meeting folders it produced. Parsed once per folder and remembered,
+        // because this ran over every meeting on every refresh.
+        var sources: [URL: String] = [:]
         var producedBy: [String: [URL]] = [:]
         for folder in meetingFolders {
+            if let cached = cachedSources[folder] {
+                sources[folder] = cached
+                producedBy[cached, default: []].append(folder)
+                continue
+            }
             let notes = folder.appending(path: "notes.json")
             guard
                 let data = try? Data(contentsOf: notes),
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let source = object["source_file"] as? String
             else { continue }
-            producedBy[URL(filePath: source).lastPathComponent, default: []].append(folder)
+            let name = URL(filePath: source).lastPathComponent
+            sources[folder] = name
+            producedBy[name, default: []].append(folder)
         }
 
-        return
+        let recordings =
             entries
-            .filter { mediaExtensions.contains($0.pathExtension.lowercased()) }
+            .filter { Media.extensions.contains($0.pathExtension.lowercased()) }
             .map { url in
                 let values = try? url.resourceValues(forKeys: [
                     .fileSizeKey, .contentModificationDateKey,
@@ -106,5 +119,6 @@ final class WatchQueue {
                 )
             }
             .sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        return (recordings, sources)
     }
 }

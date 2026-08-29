@@ -29,6 +29,7 @@ struct TokenList: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(item)")
                             .help("Remove \(item)")
                         }
                         .font(.callout)

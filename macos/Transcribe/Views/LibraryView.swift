@@ -338,11 +338,7 @@ struct LibraryView: View {
         await library.load(root: settings.folder(ConfigKey.destination))
         await tags.load(folders: library.folders)
         index.build(folders: library.folders)
-        await queue.load(
-            watch: settings.folder(ConfigKey.watch),
-            index: index.meetings,
-            library: library.folders
-        )
+        await queue.load(watch: settings.folder(ConfigKey.watch), library: library.folders)
     }
 
     private func chooseFolder() {

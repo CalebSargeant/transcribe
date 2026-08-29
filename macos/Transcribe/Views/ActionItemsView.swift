@@ -8,6 +8,8 @@ import SwiftUI
 struct ActionItemsView: View {
     @Environment(MeetingIndex.self) private var index
     @Environment(Completions.self) private var completions
+    @Environment(AppleExport.self) private var export
+    @Environment(Settings.self) private var settings
     let onOpen: (URL) -> Void
 
     @State private var owner: String?
@@ -27,6 +29,25 @@ struct ActionItemsView: View {
         index.allActions.filter {
             !completions.isDone(meeting: $0.meeting.folder, action: $0.action)
         }.count
+    }
+
+    /// Exports what is on screen, not everything: the owner filter and the
+    /// completed toggle are the user saying which actions they mean.
+    private func sendToReminders() {
+        let list = settings.config.values[ConfigKey.remindersList]
+        let shown = items
+        Task {
+            for (meeting, action) in shown {
+                await export.sendToReminders(
+                    actions: [action],
+                    meetingTitle: meeting.title,
+                    meetingFolder: meeting.folder,
+                    meetingDate: meeting.date,
+                    listID: list,
+                    dueDate: nil
+                )
+            }
+        }
     }
 
     var body: some View {
@@ -50,12 +71,15 @@ struct ActionItemsView: View {
                     Button("Show completed") { showDone = true }
                 }
             } else {
-                List {
-                    ForEach(Array(items.enumerated()), id: \.offset) { _, entry in
-                        ActionRow(meeting: entry.meeting, action: entry.action, onOpen: onOpen)
+                VStack(spacing: 0) {
+                    if export.status != .idle { AppleExportBar() }
+                    List {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, entry in
+                            ActionRow(meeting: entry.meeting, action: entry.action, onOpen: onOpen)
+                        }
                     }
+                    .listStyle(.inset)
                 }
-                .listStyle(.inset)
             }
         }
         .navigationTitle("Action items")
@@ -89,6 +113,15 @@ struct ActionItemsView: View {
                 }
                 .help("Include actions already ticked off")
             }
+            ToolbarItem {
+                Button {
+                    sendToReminders()
+                } label: {
+                    Label("Send to Reminders", systemImage: "checklist")
+                }
+                .disabled(items.isEmpty || export.isWorking)
+                .help("Add every action shown here to Reminders")
+            }
         }
     }
 }
@@ -112,6 +145,7 @@ private struct ActionRow: View {
                     .foregroundStyle(isDone ? .green : .secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(isDone ? "Mark as outstanding" : "Mark as done")
             .help(isDone ? "Mark as still outstanding" : "Mark as done")
 
             VStack(alignment: .leading, spacing: 3) {

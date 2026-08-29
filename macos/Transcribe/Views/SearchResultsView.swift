@@ -10,7 +10,9 @@ struct SearchResultsView: View {
     let query: String
     let onOpen: (URL, Double?) -> Void
 
-    private var results: [IndexedMeeting] { index.search(query) }
+    /// Computed once per query change, not once per `body`. `results` was read
+    /// three times per render and each read walked every meeting's haystack.
+    @State private var results: [IndexedMeeting] = []
 
     var body: some View {
         Group {
@@ -79,6 +81,7 @@ struct SearchResultsView: View {
                 .listStyle(.inset)
             }
         }
+        .task(id: query) { results = index.search(query) }
         .navigationTitle("“\(query)”")
         .navigationSubtitle(
             results.isEmpty ? "" : "\(results.count) meeting\(results.count == 1 ? "" : "s")")

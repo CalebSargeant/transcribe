@@ -684,7 +684,7 @@ struct WatchQueueTests {
             try Data("x".utf8).write(to: watch.appending(path: "a.mov"))
         }
         defer { try? FileManager.default.removeItem(at: tree.root) }
-        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: [])
+        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: []).recordings
         #expect(found.count == 1)
         #expect(!found[0].isProcessed)
     }
@@ -702,7 +702,7 @@ struct WatchQueueTests {
                 source: recording.path(percentEncoded: false))
         }
         defer { try? FileManager.default.removeItem(at: tree.root) }
-        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: [meetingURL])
+        let found = WatchQueue.scan(watch: tree.watch, meetingFolders: [meetingURL]).recordings
         #expect(found.count == 1)
         #expect(found[0].isProcessed)
         #expect(found[0].processedInto == [meetingURL])
@@ -715,12 +715,12 @@ struct WatchQueueTests {
             try Data("x".utf8).write(to: watch.appending(path: "a.mp4"))
         }
         defer { try? FileManager.default.removeItem(at: tree.root) }
-        #expect(WatchQueue.scan(watch: tree.watch, meetingFolders: []).count == 1)
+        #expect(WatchQueue.scan(watch: tree.watch, meetingFolders: []).recordings.count == 1)
     }
 
     @Test("a missing watch folder yields nothing")
     func missingWatch() {
-        #expect(WatchQueue.scan(watch: URL(filePath: "/nonexistent"), meetingFolders: []).isEmpty)
+        #expect(WatchQueue.scan(watch: URL(filePath: "/nonexistent"), meetingFolders: []).recordings.isEmpty)
     }
 }
 
@@ -1152,5 +1152,63 @@ struct AutoRecordTests {
         seeing(m, mic: true, camera: true)
         await m.decide(now: t0)
         #expect(m.waitingSeconds(now: t0.addingTimeInterval(20)) == 25)
+    }
+}
+
+@Suite("Media list")
+struct MediaTests {
+    /// One list. Two had drifted apart, so a .mkv in the watch folder became a
+    /// meeting whose media the library then could not find.
+    @Test(arguments: ["a.mov", "a.mp4", "a.m4v", "a.mkv", "a.avi", "a.wav", "a.mp3", "a.m4a", "a.qta"])
+    func recognisedEverywhere(name: String) {
+        #expect(Media.isMedia(URL(filePath: "/x/\(name)")))
+    }
+
+    @Test(arguments: ["notes.json", "transcript.txt", "a.pdf", "noextension"])
+    func notMedia(name: String) {
+        #expect(!Media.isMedia(URL(filePath: "/x/\(name)")))
+    }
+
+    /// The extracted audio sits beside the video; the video is what "the
+    /// recording" means.
+    @Test("video wins over the wav beside it")
+    func prefersVideo() {
+        let picked = Media.preferred(from: [
+            URL(filePath: "/x/a.wav"), URL(filePath: "/x/a.mov"),
+        ])
+        #expect(picked?.pathExtension == "mov")
+    }
+
+    @Test("audio alone is still picked")
+    func audioOnly() {
+        #expect(Media.preferred(from: [URL(filePath: "/x/a.wav")])?.pathExtension == "wav")
+    }
+
+    @Test("nothing playable yields nothing")
+    func nothing() {
+        #expect(Media.preferred(from: [URL(filePath: "/x/notes.json")]) == nil)
+    }
+}
+
+@Suite("Duration formatting")
+struct DurationTests {
+    /// Int(Double) traps on these. A hand-edited notes.json reaches the
+    /// formatter and takes the app down with it.
+    @Test(arguments: [Double.nan, .infinity, -.infinity, -1, 1e18])
+    func unusableValuesDoNotTrap(seconds: Double) {
+        #expect(Timecode.text(from: seconds) == "--:--:--")
+        #expect(Timecode.minutes(from: seconds) == nil)
+    }
+
+    @Test(arguments: [(0.0, "00:00:00"), (61.0, "00:01:01"), (3723.0, "01:02:03")])
+    func usableValues(seconds: Double, expected: String) {
+        #expect(Timecode.text(from: seconds) == expected)
+    }
+
+    @Test("minutes rounds down")
+    func minutes() {
+        #expect(Timecode.minutes(from: 119) == 1)
+        #expect(Timecode.minutes(from: 3600) == 60)
+        #expect(Timecode.minutes(from: 0) == nil)
     }
 }

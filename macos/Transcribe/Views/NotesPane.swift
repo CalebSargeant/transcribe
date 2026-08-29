@@ -70,8 +70,11 @@ struct NotesPane: View {
             Section8("Next steps") {
                 ForEach(notes.nextSteps) { step in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        // Decorative: the tickable list lives in Action
+                        // items, so this must not read as a control.
                         Image(systemName: "square")
                             .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(step.title).fontWeight(.medium)

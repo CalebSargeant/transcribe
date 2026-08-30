@@ -226,3 +226,38 @@ def test_a_run_where_some_succeed_reports_success(monkeypatch, tmp_path, config)
         [str(good), "/nonexistent/folder"], {**config, "destination_directory": str(tmp_path)}
     )
     assert result == 0
+
+
+def test_a_bare_string_is_not_split_into_letters(tmp_path):
+    """A model answering "Architecture" instead of ["Architecture"] produced one
+    category per letter. The schema is a request, not a guarantee."""
+    assert write_tags(tmp_path, "Architecture") == ["Architecture"]
+
+
+def test_a_non_utf8_tags_file_reads_as_empty(tmp_path):
+    (tmp_path / "tags.json").write_bytes(b"\xff\xfe not utf-8")
+    assert read_tags(tmp_path) == []
+
+
+def test_notes_json_that_is_not_an_object_is_skipped(tmp_path, config):
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "notes.json").write_text("[1, 2, 3]")
+    assert categorise_meeting(folder, config) is None
+
+
+def test_one_bad_folder_does_not_abort_the_run(monkeypatch, tmp_path, config, capsys):
+    good = make_meeting(tmp_path, "good")
+    bad = make_meeting(tmp_path, "bad")
+
+    def fake(cfg, system, user, schema, **kw):
+        if "bad" in user:
+            raise RuntimeError("provider exploded")
+        return {"categories": ["Architecture"]}
+
+    monkeypatch.setattr(categorise, "complete_json", fake)
+    result = categorise_folders(
+        [str(bad), str(good)], {**config, "destination_directory": str(tmp_path)}
+    )
+    assert result == 0
+    assert read_tags(good) == ["Architecture"]

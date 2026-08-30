@@ -81,10 +81,20 @@ struct SearchResultsView: View {
                 .listStyle(.inset)
             }
         }
-        .task(id: query) { results = index.search(query) }
+        // Keyed on the index's progress as well as the query: results computed
+        // while indexing was at 30% never refreshed when it reached 100%.
+        .task(id: SearchKey(query: query, progress: index.progress)) {
+            results = index.search(query)
+        }
         .navigationTitle("“\(query)”")
         .navigationSubtitle(
             results.isEmpty ? "" : "\(results.count) meeting\(results.count == 1 ? "" : "s")")
+    }
+
+    /// Re-runs the search when either the query or the index changes.
+    private struct SearchKey: Equatable {
+        let query: String
+        let progress: Double
     }
 
     /// Bold the matched span so the eye lands on it.

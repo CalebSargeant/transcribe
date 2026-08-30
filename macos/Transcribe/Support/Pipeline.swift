@@ -19,6 +19,9 @@ final class Pipeline {
 
     private(set) var state: State = .idle
     private(set) var output: String = ""
+    /// The meeting folder the current run is about, so a detail view can tell
+    /// whether a finished run concerns it.
+    private(set) var lastTarget: URL?
     private var task: Task<Void, Never>?
 
     /// Holds the running child so cancelling can actually kill it.
@@ -89,7 +92,8 @@ final class Pipeline {
         run(
             tool: tool,
             arguments: [media.path(percentEncoded: false), "--keep-source"],
-            label: label
+            label: label,
+            target: folder.id
         )
     }
 
@@ -106,7 +110,8 @@ final class Pipeline {
         run(
             tool: tool,
             arguments: ["notes", folder.path(percentEncoded: false)],
-            label: "Writing notes from the transcript"
+            label: "Writing notes from the transcript",
+            target: folder
         )
     }
 
@@ -174,8 +179,9 @@ final class Pipeline {
             + "'brew install calebsargeant/tap/transcribe'."
     }
 
-    private func run(tool: URL, arguments: [String], label: String) {
+    private func run(tool: URL, arguments: [String], label: String, target: URL? = nil) {
         cancel()
+        lastTarget = target
         state = .running(label)
         output = ""
 

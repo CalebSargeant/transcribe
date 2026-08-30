@@ -49,11 +49,22 @@ enum Presence {
         return list.contains { lowered.contains($0) }
     }
 
-    static func current(includeCalendar: Bool = true) -> State {
+    /// The signals right now.
+    ///
+    /// The ignore lists are passed in rather than read from the hardcoded
+    /// defaults, because the Advanced tab lets the user add to them and those
+    /// settings were write-only: configured and never consulted.
+    static func current(
+        includeCalendar: Bool = true,
+        ignoredDevices: [String] = [],
+        ignoredCameras: [String] = []
+    ) -> State {
         var state = State()
-        state.microphoneNames = runningMicrophones()
+        state.microphoneNames = runningMicrophones(
+            ignoring: ignoredDevices.isEmpty ? self.ignoredDevices : ignoredDevices)
         state.microphone = !state.microphoneNames.isEmpty
-        state.cameraNames = runningCameras()
+        state.cameraNames = runningCameras(
+            ignoring: ignoredCameras.isEmpty ? self.ignoredCameras : ignoredCameras)
         state.camera = !state.cameraNames.isEmpty
         if includeCalendar, let event = currentCalendarEvent() {
             state.calendarMeeting = true
@@ -88,10 +99,11 @@ enum Presence {
     // MARK: - Microphone
 
     /// Input devices reporting `kAudioDevicePropertyDeviceIsRunningSomewhere`.
-    static func runningMicrophones() -> [String] {
-        deviceIDs().compactMap { device in
+    static func runningMicrophones(ignoring list: [String]? = nil) -> [String] {
+        let ignore = list ?? ignoredDevices
+        return deviceIDs().compactMap { device in
             guard hasInputStreams(device), isRunningSomewhere(device) else { return nil }
-            guard let name = deviceName(device), !isIgnored(name, in: ignoredDevices) else {
+            guard let name = deviceName(device), !isIgnored(name, in: ignore) else {
                 return nil
             }
             return name
@@ -173,7 +185,8 @@ enum Presence {
 
     /// `AVCaptureDevice.isInUseByAnotherApplication` needs no camera permission
     /// of its own, which is what lets this poll quietly.
-    static func runningCameras() -> [String] {
+    static func runningCameras(ignoring list: [String]? = nil) -> [String] {
+        let ignore = list ?? ignoredCameras
         let discovery = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
             mediaType: .video,
@@ -182,6 +195,6 @@ enum Presence {
         return discovery.devices
             .filter { $0.isInUseByAnotherApplication }
             .map(\.localizedName)
-            .filter { !isIgnored($0, in: ignoredCameras) }
+            .filter { !isIgnored($0, in: ignore) }
     }
 }

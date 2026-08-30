@@ -61,6 +61,10 @@ final class MeetingIndex {
     private(set) var progress: Double = 0
 
     private var task: Task<Void, Never>?
+    /// Stamps each build. `Task.isCancelled` alone is not enough: the check has
+    /// to happen after every await, and a cancelled build could still publish
+    /// its last batch over a newer one.
+    private var buildID = 0
 
     // nonisolated because the cache is read and written off the main actor.
     // A static on a @MainActor type inherits that isolation: a warning today,
@@ -105,6 +109,8 @@ final class MeetingIndex {
             return
         }
 
+        buildID += 1
+        let id = buildID
         building = true
         progress = 0
         let cached = meetings
@@ -131,12 +137,12 @@ final class MeetingIndex {
                 }
                 built.append(indexed)
                 // Publishing per folder keeps search usable while it builds.
-                guard let self else { return }
+                guard let self, id == self.buildID, !Task.isCancelled else { return }
                 self.meetings = built
                 self.progress = Double(position + 1) / total
             }
 
-            guard let self, !Task.isCancelled else { return }
+            guard let self, id == self.buildID, !Task.isCancelled else { return }
             self.building = false
             self.progress = 1
             let snapshot = built

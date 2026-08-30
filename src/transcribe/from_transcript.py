@@ -33,7 +33,12 @@ from .segments import Meeting, Segment
 # "[00:00:02] text" or "[01:02:03] text"
 _STAMPED_LINE = re.compile(r"^\[(\d{1,2}:\d{2}:\d{2}(?:\.\d+)?)\]\s*(.*)$")
 # "Speaker 5:" or "Arno Bakker:" -- a short line that is only a name and a colon.
-_SPEAKER_HEADER = re.compile(r"^([^\[\]]{1,60}):\s*$")
+#
+# It has to start with a capital and stay under a handful of words, or a wrapped
+# sentence that happens to end in a colon ("as follows:") is read as a speaker
+# and deleted from the transcript.
+_SPEAKER_HEADER = re.compile(r"^([A-Z][^\[\]:]{0,58}):\s*$")
+_MAX_HEADER_WORDS = 5
 # "[00:00.000 --> 00:01.660]  text", whisper's own output.
 _RANGE_LINE = re.compile(
     r"^\[((?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)\s*-->\s*((?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?)\]\s*(.*)$"
@@ -64,6 +69,7 @@ def parse_transcript(text):
         return []
 
     segments = []
+    preamble = []
     speaker = None
 
     for raw in text.splitlines():
@@ -99,7 +105,7 @@ def parse_transcript(text):
             continue
 
         header = _SPEAKER_HEADER.match(line)
-        if header:
+        if header and len(header.group(1).split()) <= _MAX_HEADER_WORDS:
             speaker = header.group(1).strip()
             # "Unknown speaker" is this pipeline's placeholder for an
             # unattributed turn, not a person.
@@ -108,9 +114,17 @@ def parse_transcript(text):
             continue
 
         # A line that is neither stamped nor a header belongs to the segment
-        # above it, which is how a wrapped long turn appears.
+        # above it, which is how a wrapped long turn appears. Before the first
+        # stamped line there is no segment yet, so it is held rather than
+        # dropped -- a transcript with a preamble lost it entirely.
         if segments:
             segments[-1].text = f"{segments[-1].text} {line}".strip()
+        else:
+            preamble.append(line)
+
+    # Anything said before the first timestamp belongs to the meeting too.
+    if preamble and segments:
+        segments[0].text = f"{' '.join(preamble)} {segments[0].text}".strip()
 
     # Close each segment at the next one's start.
     for index, segment in enumerate(segments[:-1]):
@@ -174,6 +188,7 @@ def read_meeting(folder):
         return None
 
     segments = parse_transcript(text)
+    timed = bool(segments)
     if not segments:
         # A third format exists: plain prose with no timings at all, which is
         # what an externally supplied transcript looks like. Sentences spread
@@ -190,6 +205,9 @@ def read_meeting(folder):
         segments=segments,
     )
     _apply_existing_context(folder, meeting)
+    # Whether the timings are measured or interpolated decides what the notes
+    # may claim about them.
+    meeting.timings_are_measured = timed
     return meeting
 
 
@@ -204,9 +222,11 @@ def _apply_existing_context(folder, meeting):
 
     path = Path(folder) / "notes.json"
     try:
-        with open(path) as handle:
+        with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+        if not isinstance(payload, dict):
+            raise ValueError("notes.json is not an object")
+    except (OSError, ValueError):
         # No previous notes: fall back to the folder name, minus its date
         # prefix, which is the best title available.
         meeting.title = _title_from_folder_name(Path(folder).name)
@@ -229,9 +249,16 @@ def _title_from_folder_name(name):
     return trimmed or name
 
 
-def _recording_start(folder, payload):
-    """When the recording started, from previous notes or the folder name."""
-    from datetime import datetime
+def _recording_start(folder, payload, meeting=None):
+    """When the *recording* started, from previous notes or the folder name.
+
+    The folder name is not the recording's start: the pipeline builds it from
+    ``recording_start + meeting.start``, so for a meeting cut out of a longer
+    recording it names the moment that meeting began. Rendering then adds the
+    offset a second time, and a meeting 2h21m into a recording was dated 2h21m
+    too late -- in notes.md and, worse, written back into notes.json.
+    """
+    from datetime import datetime, timedelta
 
     stamp = (payload or {}).get("recording_started_at")
     if stamp:
@@ -240,16 +267,20 @@ def _recording_start(folder, payload):
         except ValueError:
             pass
 
+    # Anything derived from the folder name has the meeting's own offset baked
+    # in already, so it comes back out here.
+    offset = timedelta(seconds=meeting.start) if meeting is not None else timedelta()
+
     name = Path(folder).name
     for fmt, width in (("%Y-%m-%d %H%M", 15), ("%Y-%m-%d %H-%M-%S", 19), ("%Y-%m-%d", 10)):
         try:
-            return datetime.strptime(name[:width], fmt)
+            return datetime.strptime(name[:width], fmt) - offset
         except ValueError:
             continue
     embedded = re.search(r"[-_](\d{8}_\d{6})[-_]", name)
     if embedded:
         try:
-            return datetime.strptime(embedded.group(1), "%Y%m%d_%H%M%S")
+            return datetime.strptime(embedded.group(1), "%Y%m%d_%H%M%S") - offset
         except ValueError:
             pass
     return None
@@ -287,9 +318,11 @@ def generate_for_folder(folder, config, name_speakers=True):
         return None
 
     try:
-        with open(folder / "notes.json") as handle:
+        with open(folder / "notes.json", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+        if not isinstance(payload, dict):
+            payload = {}
+    except (OSError, ValueError):
         payload = {}
 
     # Speaker naming only applies where the transcript recorded who was
@@ -303,7 +336,15 @@ def generate_for_folder(folder, config, name_speakers=True):
         except Exception as e:
             print(f"  Warning: could not name speakers ({type(e).__name__}: {e})")
 
-    notes = generate_notes(meeting, config)
+    # Timestamps spread evenly across prose locate a passage roughly. Citing
+    # them as if they were measured is the same mistake the Voice Memos path
+    # already guards against.
+    extra_context = (
+        None
+        if meeting.timings_are_measured
+        else ("The timestamps in this transcript are interpolated, not measured. Do not cite them.")
+    )
+    notes = generate_notes(meeting, config, extra_context=extra_context)
     if not notes:
         return None
 
@@ -315,7 +356,7 @@ def generate_for_folder(folder, config, name_speakers=True):
         notes,
         folder,
         _source_reference(folder, payload),
-        _recording_start(folder, payload),
+        _recording_start(folder, payload, meeting),
         config,
         split_video=False,
         # The transcript in this folder is what the meeting was built from.
@@ -351,7 +392,12 @@ def generate_for_folders(folders, config):
             continue
 
         print(f"\n--- {folder.name} ---")
-        notes = generate_for_folder(folder, config)
+        try:
+            notes = generate_for_folder(folder, config)
+        except Exception as e:
+            print(f"✗ {type(e).__name__}: {e}")
+            failures += 1
+            continue
         if notes:
             print(f"✓ {notes.get('title') or folder.name}")
             steps = notes.get("next_steps") or []

@@ -336,3 +336,147 @@ def test_the_other_outputs_are_still_written(monkeypatch, tmp_path, config):
 
     for name in ("notes.json", "notes.md", "notes.html", "summary.txt"):
         assert (folder / name).exists(), name
+
+
+# --- parsing edge cases that lose or invent data -----------------------------
+
+
+def test_a_preamble_before_the_first_timestamp_is_kept():
+    """Whatever was said before the first stamped line is still the meeting."""
+    segments = parse_transcript("Some preamble here\n[00:00:05] the first stamped line\n")
+    assert len(segments) == 1
+    assert "Some preamble here" in segments[0].text
+    assert "the first stamped line" in segments[0].text
+
+
+def test_a_wrapped_line_ending_in_a_colon_is_not_a_speaker():
+    """'as follows:' is a sentence, not a name, and must not be deleted."""
+    segments = parse_transcript("Speaker 1:\n[00:00:01] the plan is\nas follows:\nfirst we ship\n")
+    assert "as follows:" in segments[0].text
+    assert segments[0].speaker == "Speaker 1"
+
+
+@pytest.mark.parametrize(
+    "header", ["Speaker 5", "Arno Bakker", "Caleb Sargeant", "Unknown speaker"]
+)
+def test_real_speaker_headers_still_work(header):
+    segments = parse_transcript(f"{header}:\n[00:00:01] hello\n")
+    expected = None if header.lower() == "unknown speaker" else header
+    assert segments[0].speaker == expected
+
+
+def test_a_long_lowercase_phrase_is_not_a_speaker():
+    segments = parse_transcript(
+        "Speaker 1:\n[00:00:01] one\nand then the whole team agreed the following:\n"
+    )
+    assert segments[0].speaker == "Speaker 1"
+    assert "the whole team agreed" in segments[0].text
+
+
+# --- the recording start is not the meeting start ----------------------------
+
+
+def test_a_split_meetings_folder_date_is_not_the_recording_start(tmp_path):
+    """The folder name is recording_start + meeting.start, so the offset comes
+    back out. Rendering added it a second time and dated the meeting late."""
+    from transcribe.from_transcript import _recording_start
+    from transcribe.segments import Meeting, Segment
+
+    meeting = Meeting(
+        index=1,
+        start=8511.0,
+        end=8600.0,
+        segments=[Segment(start=8511.0, end=8600.0, text="x")],
+    )
+    started = _recording_start("/x/2026-08-25 1156 Janeway hosting", {}, meeting)
+    assert started.hour == 9 and started.minute == 34
+
+
+def test_a_meeting_at_offset_zero_keeps_the_folder_time():
+    from transcribe.from_transcript import _recording_start
+    from transcribe.segments import Meeting
+
+    meeting = Meeting(index=1, start=0.0, end=60.0, segments=[])
+    started = _recording_start("/x/2026-08-25 1156 Janeway hosting", {}, meeting)
+    assert started.hour == 11 and started.minute == 56
+
+
+def test_a_recorded_start_in_notes_json_wins(tmp_path):
+    """A previous run measured it; the folder name is only a fallback."""
+    from transcribe.from_transcript import _recording_start
+    from transcribe.segments import Meeting
+
+    meeting = Meeting(index=1, start=8511.0, end=8600.0, segments=[])
+    started = _recording_start(
+        "/x/2026-08-25 1156 Janeway", {"recording_started_at": "2026-08-25T09:34:17"}, meeting
+    )
+    assert started.hour == 9 and started.minute == 34 and started.second == 17
+
+
+# --- one bad folder must not stop a run --------------------------------------
+
+
+def test_a_malformed_notes_json_does_not_abort_the_batch(monkeypatch, tmp_path, config, capsys):
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "transcript.txt").write_text(GROUPED)
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "transcript.txt").write_text(GROUPED)
+    (bad / "notes.json").write_bytes(b"\xff\xfe not json and not utf-8")
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    result = generate_for_folders([str(bad), str(good)], config)
+    assert result == 0
+    assert (good / "notes.json").exists()
+
+
+def test_timed_transcripts_are_marked_as_measured(tmp_path):
+    (tmp_path / "transcript.txt").write_text(GROUPED)
+    assert read_meeting(tmp_path).timings_are_measured is True
+
+
+def test_prose_transcripts_are_marked_as_interpolated(tmp_path):
+    (tmp_path / "transcript.txt").write_text("One thing. Another thing. A third.")
+    assert read_meeting(tmp_path).timings_are_measured is False
+
+
+def test_interpolated_timings_tell_the_model_not_to_cite_them(monkeypatch, tmp_path, config):
+    """Otherwise the notes cite invented timestamps as though measured."""
+    captured = {}
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text("One thing. Another thing. A third one here.")
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(
+        notes_mod,
+        "complete_json",
+        lambda cfg, system, user, schema, **kw: (
+            captured.update(user=user) or {"title": "T", "summary": "s"}
+        ),
+    )
+    generate_for_folder(folder, config, name_speakers=False)
+    assert "interpolated" in captured["user"].lower()
+
+
+def test_measured_timings_are_not_disclaimed(monkeypatch, tmp_path, config):
+    captured = {}
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text(GROUPED)
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(
+        notes_mod,
+        "complete_json",
+        lambda cfg, system, user, schema, **kw: (
+            captured.update(user=user) or {"title": "T", "summary": "s"}
+        ),
+    )
+    generate_for_folder(folder, config, name_speakers=False)
+    assert "interpolated" not in captured["user"].lower()

@@ -87,7 +87,13 @@ def _folder_name_for(meeting, recording_start, notes):
 
 
 def _write_meeting_outputs(
-    meeting, notes, dest_dir, video_file, recording_start, config, split_video,
+    meeting,
+    notes,
+    dest_dir,
+    video_file,
+    recording_start,
+    config,
+    split_video,
     write_transcript=True,
 ):
     """Write every artifact for one meeting into its own folder.

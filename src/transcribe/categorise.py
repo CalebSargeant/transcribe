@@ -62,9 +62,11 @@ def existing_vocabulary(destination):
 def read_tags(folder):
     """Categories already on one meeting."""
     try:
-        with open(Path(folder) / TAGS_FILE) as handle:
+        with open(Path(folder) / TAGS_FILE, encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        # ValueError covers a malformed file and a non-UTF-8 one alike; both
+        # mean "no usable categories", not "stop the run".
         return []
     names = data.get("names") if isinstance(data, dict) else None
     return [str(name) for name in names] if isinstance(names, list) else []
@@ -84,9 +86,16 @@ def write_tags(folder, names):
 
 
 def _dedupe(names):
-    """Trim, drop blanks, and collapse case-insensitive duplicates."""
+    """Trim, drop blanks, and collapse case-insensitive duplicates.
+
+    A bare string is wrapped rather than iterated. A model that answers with
+    "Architecture" instead of ["Architecture"] would otherwise produce one
+    category per letter, and the schema is a request, not a guarantee.
+    """
+    if isinstance(names, str):
+        names = [names]
     seen, result = set(), []
-    for name in names:
+    for name in names or []:
         cleaned = str(name).strip()
         if cleaned and cleaned.lower() not in seen:
             seen.add(cleaned.lower())
@@ -97,9 +106,11 @@ def _dedupe(names):
 def _meeting_summary(folder):
     """The part of a meeting worth sending: what it was about, not every word."""
     try:
-        with open(Path(folder) / "notes.json") as handle:
+        with open(Path(folder) / "notes.json", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+        if not isinstance(payload, dict):
+            return None
+    except (OSError, ValueError):
         return None
 
     notes = payload.get("notes") or {}
@@ -182,7 +193,12 @@ def categorise_folders(folders, config, overwrite=False):
             failures += 1
             continue
 
-        names = categorise_meeting(path, config, vocabulary, overwrite=overwrite)
+        try:
+            names = categorise_meeting(path, config, vocabulary, overwrite=overwrite)
+        except Exception as e:
+            print(f"✗ {path.name}: {type(e).__name__}: {e}")
+            failures += 1
+            continue
         if names is None:
             existing = read_tags(path)
             if existing and not overwrite:

@@ -40,15 +40,17 @@ final class WatchQueue {
     func load(watch: URL?, library: [MeetingFolder]) async {
         loadID += 1
         let id = loadID
+        // Both above the guard: a load with no watch folder used to return
+        // before clearing `scanning`, leaving a spinner that never stopped
+        // whenever it superseded a scan in flight.
+        scanning = true
+        defer { if id == loadID { scanning = false } }
 
         guard let watch else {
             recordings = []
             message = "No watch folder configured."
             return
         }
-
-        scanning = true
-        defer { if id == loadID { scanning = false } }
 
         // Which source files already produced a meeting. Read from the folders
         // themselves rather than guessed from names, because the pipeline

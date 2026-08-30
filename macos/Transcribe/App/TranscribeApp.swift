@@ -64,8 +64,7 @@ struct TranscribeApp: App {
                     // Recording itself goes through the CLI, which already
                     // speaks obs-websocket.
                     monitor.control = { start in await pipeline.controlRecording(start: start) }
-                    monitor.start(
-                        pollSeconds: settings.config.int(ConfigKey.pollSeconds, default: 5))
+                    monitor.start()
                 }
         }
         .windowToolbarStyle(.unified)

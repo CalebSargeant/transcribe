@@ -16,6 +16,7 @@ struct LibraryView: View {
     /// Set when a search result is opened, so the meeting can jump straight to
     /// the line that matched.
     @State private var pendingSeek: Double?
+    @State private var seekTarget: URL?
     @State private var lastMeeting: MeetingFolder?
     @State private var viewingResult = false
 
@@ -75,8 +76,13 @@ struct LibraryView: View {
             }
         }
         .onChange(of: selection) { _, new in
-            // Remembered so Cmd-1 can come back to where you were.
-            if case .meeting(let folder) = new { lastMeeting = folder }
+            if case .meeting(let folder) = new {
+                // Remembered so Cmd-1 can come back to where you were.
+                lastMeeting = folder
+                // Clicking a meeting while a search is open should show it, not
+                // leave the results up.
+                if hasQuery { viewingResult = true }
+            }
         }
         .onChange(of: pipeline.state) { _, new in
             // A finished run has written new files; the library, tags and
@@ -96,10 +102,17 @@ struct LibraryView: View {
         } else {
             switch selection {
             case .meeting(let folder):
-                MeetingDetailView(folder: folder, library: library, seekOnOpen: pendingSeek)
-                    // Without this the detail view keeps the previously
-                    // selected meeting's @State when the selection changes.
-                    .id(folder.id)
+                MeetingDetailView(
+                    folder: folder,
+                    library: library,
+                    // Consumed by the opening it belongs to. Left set, it
+                    // hijacked the next meeting opened by any other route,
+                    // forcing the Transcript tab and an unrelated timestamp.
+                    seekOnOpen: seekTarget == folder.id ? pendingSeek : nil
+                )
+                // Without this the detail view keeps the previously selected
+                // meeting's @State when the selection changes.
+                .id(folder.id)
             case .actions:
                 ActionItemsView { folder in open(folder: folder, seek: nil) }
             case .queue:
@@ -117,6 +130,7 @@ struct LibraryView: View {
     private func open(folder: URL, seek: Double?) {
         guard let match = library.folders.first(where: { $0.id == folder }) else { return }
         pendingSeek = seek
+        seekTarget = seek == nil ? nil : folder
         viewingResult = true
         selection = .meeting(match)
     }
@@ -194,8 +208,24 @@ struct LibraryView: View {
                 }
                 .listStyle(.sidebar)
 
+                // A run started from the sidebar's context menu or the category
+                // menu reports nowhere else unless a meeting or the queue
+                // happens to be open.
+                if pipeline.state != .idle, !isDetailShowingPipeline {
+                    PipelineStatusBar()
+                }
                 statusFooter
             }
+        }
+    }
+
+    /// True when the detail pane is already showing the pipeline's state, so
+    /// the sidebar does not show it twice.
+    private var isDetailShowingPipeline: Bool {
+        if searching { return false }
+        switch selection {
+        case .meeting, .queue: return true
+        default: return false
         }
     }
 
@@ -330,7 +360,7 @@ struct LibraryView: View {
         Menu("Category") {
             ForEach(tags.allTags, id: \.self) { tag in
                 Button {
-                    try? tags.toggle(tag, for: folder.id)
+                    Task { try? await tags.toggle(tag, for: folder.id) }
                 } label: {
                     if tags.tags(for: folder.id).contains(where: {
                         $0.caseInsensitiveCompare(tag) == .orderedSame

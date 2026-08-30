@@ -90,7 +90,13 @@ final class RecordingMonitor {
     var meetingInProgress: Bool {
         guard presence.microphone else { return false }
         if settings.config.bool(ConfigKey.micOnly, default: false) { return true }
-        if presence.camera { return true }
+
+        // Both corroborating signals are opt-out, and each is checked against
+        // its own setting. Previously the camera counted whether or not it was
+        // required, so the toggle did nothing in either direction.
+        if settings.config.bool(ConfigKey.requireCamera, default: true), presence.camera {
+            return true
+        }
         if settings.config.bool(ConfigKey.useCalendar, default: true), presence.calendarMeeting {
             return true
         }
@@ -109,12 +115,15 @@ final class RecordingMonitor {
         Double(settings.config.int(ConfigKey.stopAfter, default: 120))
     }
 
-    func start(pollSeconds: Int = 5) {
+    /// The interval is re-read each time round, so changing it in Advanced
+    /// takes effect without relaunching.
+    func start() {
         timer?.cancel()
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.tick()
-                try? await Task.sleep(for: .seconds(max(pollSeconds, 1)))
+                let seconds = self?.settings.config.int(ConfigKey.pollSeconds, default: 5) ?? 5
+                try? await Task.sleep(for: .seconds(max(seconds, 1)))
             }
         }
     }
@@ -134,8 +143,14 @@ final class RecordingMonitor {
     /// running.
     func tick(now: Date = Date()) async {
         let includeCalendar = settings.config.bool(ConfigKey.useCalendar, default: true)
+        let ignoredDevices = settings.list(ConfigKey.ignoredDevices)
+        let ignoredCameras = settings.list(ConfigKey.ignoredCameras)
         presence = await MeetingLibrary.offMainActor {
-            Presence.current(includeCalendar: includeCalendar)
+            Presence.current(
+                includeCalendar: includeCalendar,
+                ignoredDevices: ignoredDevices,
+                ignoredCameras: ignoredCameras
+            )
         }
         await decide(now: now)
     }
@@ -166,7 +181,7 @@ final class RecordingMonitor {
         }
 
         if let detectedSince, now.timeIntervalSince(detectedSince) >= startDelay {
-            guard enoughFreeSpace else {
+            guard await enoughFreeSpace() else {
                 lastError = "Not enough free space to start recording."
                 status = .detected
                 return
@@ -180,14 +195,17 @@ final class RecordingMonitor {
 
     /// Refuse to start below the configured floor: a truncated recording on a
     /// full disk loses the meeting entirely.
-    private var enoughFreeSpace: Bool {
+    private func enoughFreeSpace() async -> Bool {
         let floor = Int64(settings.config.int(ConfigKey.minFreeGB, default: 10))
         guard floor > 0 else { return true }
         let watch =
             settings.folder(ConfigKey.watch) ?? FileManager.default.homeDirectoryForCurrentUser
-        let free =
+        // Statting a volume can block on a network or cloud mount, and this
+        // runs on every poll.
+        let free = await MeetingLibrary.offMainActor {
             (try? watch.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
-            .volumeAvailableCapacity ?? Int.max
+                .volumeAvailableCapacity ?? Int.max
+        }
         return Int64(free) >= floor * 1_000_000_000
     }
 

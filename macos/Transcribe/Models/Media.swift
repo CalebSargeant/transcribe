@@ -14,12 +14,23 @@ enum Media {
         extensions.contains(url.pathExtension.lowercased())
     }
 
-    /// Video before audio: an extracted `.wav` usually sits beside the `.mov`
-    /// it came from, and the video is what the user means by "the recording".
+    /// Extensions that only ever carry audio.
+    ///
+    /// Demoting `.wav` alone was not enough: a folder holding an `.m4a` beside
+    /// a `.mov` could present the audio as the recording, depending on the
+    /// order the directory happened to list them in.
+    static let audioOnly: Set<String> = ["wav", "mp3", "m4a"]
+
+    /// Video before audio: extracted audio usually sits beside the video it
+    /// came from, and the video is what the user means by "the recording".
+    /// Ties keep the filesystem's order, which is stable enough per folder.
     static func preferred(from urls: [URL]) -> URL? {
-        urls.filter(isMedia).sorted {
-            ($0.pathExtension.lowercased() == "wav" ? 1 : 0)
-                < ($1.pathExtension.lowercased() == "wav" ? 1 : 0)
-        }.first
+        urls.filter(isMedia).min { lhs, rhs in
+            rank(lhs) < rank(rhs)
+        }
+    }
+
+    private static func rank(_ url: URL) -> Int {
+        audioOnly.contains(url.pathExtension.lowercased()) ? 1 : 0
     }
 }

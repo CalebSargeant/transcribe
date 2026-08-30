@@ -1409,3 +1409,78 @@ struct SettingsDurabilityTests {
         #expect(!settings.hasUnsavedEdits)
     }
 }
+
+@Suite("Media preference")
+struct MediaPreferenceTests {
+    /// Demoting .wav alone was not enough: an .m4a beside a .mov could win,
+    /// depending on the order the directory happened to list them in.
+    @Test(arguments: ["wav", "mp3", "m4a"])
+    func everyAudioFormatIsDemoted(ext: String) {
+        let picked = Media.preferred(from: [
+            URL(filePath: "/x/a.\(ext)"), URL(filePath: "/x/a.mov"),
+        ])
+        #expect(picked?.pathExtension == "mov")
+    }
+
+    @Test("order does not decide it")
+    func orderIndependent() {
+        let video = URL(filePath: "/x/a.mp4")
+        let audio = URL(filePath: "/x/a.m4a")
+        #expect(Media.preferred(from: [audio, video]) == video)
+        #expect(Media.preferred(from: [video, audio]) == video)
+    }
+
+    @Test("audio alone is still chosen")
+    func audioAlone() {
+        #expect(Media.preferred(from: [URL(filePath: "/x/a.m4a")])?.pathExtension == "m4a")
+    }
+}
+
+@MainActor
+@Suite("Detection settings are honoured")
+struct DetectionSettingsTests {
+    private func monitor(_ values: [String: String]) -> RecordingMonitor {
+        RecordingMonitor(settings: Settings(config: Configuration(values: values)))
+    }
+
+    /// The toggle used to do nothing in either direction: the camera counted
+    /// whether or not it was required.
+    @Test("turning off require-camera stops the camera corroborating")
+    func cameraRequirementIsHonoured() {
+        let on = monitor([ConfigKey.requireCamera: "true", ConfigKey.useCalendar: "false"])
+        on.setPresenceForTesting(Presence.State(microphone: true, camera: true))
+        #expect(on.meetingInProgress)
+
+        let off = monitor([ConfigKey.requireCamera: "false", ConfigKey.useCalendar: "false"])
+        off.setPresenceForTesting(Presence.State(microphone: true, camera: true))
+        #expect(!off.meetingInProgress)
+    }
+
+    @Test("the calendar corroborates on its own setting")
+    func calendarIsHonoured() {
+        let on = monitor([ConfigKey.requireCamera: "false", ConfigKey.useCalendar: "true"])
+        on.setPresenceForTesting(Presence.State(microphone: true, calendarMeeting: true))
+        #expect(on.meetingInProgress)
+
+        let off = monitor([ConfigKey.requireCamera: "false", ConfigKey.useCalendar: "false"])
+        off.setPresenceForTesting(Presence.State(microphone: true, calendarMeeting: true))
+        #expect(!off.meetingInProgress)
+    }
+
+    @Test("mic-only overrides both")
+    func micOnlyWins() {
+        let m = monitor([
+            ConfigKey.micOnly: "true", ConfigKey.requireCamera: "false",
+            ConfigKey.useCalendar: "false",
+        ])
+        m.setPresenceForTesting(Presence.State(microphone: true))
+        #expect(m.meetingInProgress)
+    }
+
+    /// The Advanced tab lets the user add to these; they were never consulted.
+    @Test("a configured ignore list is applied")
+    func ignoreListsApply() {
+        #expect(Presence.isIgnored("My Weird Mic", in: ["my weird mic"]))
+        #expect(!Presence.isIgnored("MacBook Pro Microphone", in: ["my weird mic"]))
+    }
+}

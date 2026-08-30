@@ -44,6 +44,10 @@ struct Tags: Codable, Sendable, Equatable {
 final class TagIndex {
     private(set) var byFolder: [URL: [String]] = [:]
 
+    /// Stamps each load so a slow one cannot publish over a newer one, or over
+    /// a tag the user set while it was reading.
+    private var loadID = 0
+
     var allTags: [String] {
         Array(Set(byFolder.values.flatMap { $0 })).sorted {
             $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
@@ -52,13 +56,25 @@ final class TagIndex {
 
     func tags(for folder: URL) -> [String] { byFolder[folder] ?? [] }
 
-    func set(_ tags: [String], for folder: URL) throws {
+    /// Set a folder's tags, writing the file off the main actor.
+    ///
+    /// The folder is usually on iCloud Drive, where a write is a round trip to
+    /// the file provider; doing it inline froze the window on every click.
+    func set(_ tags: [String], for folder: URL) async throws {
         let cleaned = Self.normalise(tags)
         byFolder[folder] = cleaned.isEmpty ? nil : cleaned
-        try Tags(names: cleaned).save(in: folder)
+        let failure = await MeetingLibrary.offMainActor { () -> Error? in
+            do {
+                try Tags(names: cleaned).save(in: folder)
+                return nil
+            } catch {
+                return error
+            }
+        }
+        if let failure { throw failure }
     }
 
-    func toggle(_ tag: String, for folder: URL) throws {
+    func toggle(_ tag: String, for folder: URL) async throws {
         var current = tags(for: folder)
         if let index = current.firstIndex(where: { $0.caseInsensitiveCompare(tag) == .orderedSame })
         {
@@ -66,13 +82,15 @@ final class TagIndex {
         } else {
             current.append(tag)
         }
-        try set(current, for: folder)
+        try await set(current, for: folder)
     }
 
     /// Reads the tag files. Cheap enough to do for the whole library because
     /// each is a few hundred bytes, but it still runs off the main actor since
     /// the folders may be on iCloud.
     func load(folders: [MeetingFolder]) async {
+        loadID += 1
+        let id = loadID
         let urls = folders.map(\.id)
         let loaded = await MeetingLibrary.offMainActor {
             var result: [URL: [String]] = [:]
@@ -82,6 +100,9 @@ final class TagIndex {
             }
             return result
         }
+        // A tag set while this was reading would otherwise be wiped by a
+        // snapshot taken before it.
+        guard id == loadID else { return }
         byFolder = loaded
     }
 

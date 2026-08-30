@@ -130,10 +130,13 @@ struct MeetingDetailView: View {
             await load()
         }
         .onChange(of: pipeline.state) { _, new in
-            // The pipeline has just rewritten this folder. Without this the
-            // notes it produced are invisible until you click away and back,
-            // which makes the feature look broken when it worked.
-            if case .finished = new { Task { await load(refresh: true) } }
+            // The pipeline has just rewritten a folder. Without this the notes
+            // it produced are invisible until you click away and back, which
+            // makes the feature look broken when it worked. Only reload when
+            // the run was about *this* meeting, or every open detail view
+            // re-reads on any run.
+            guard case .finished = new, pipeline.lastTarget == folder.id else { return }
+            Task { await load(refresh: true) }
         }
     }
 
@@ -274,7 +277,13 @@ struct MeetingDetailView: View {
         )
     }
 
+    /// Stamps each load so a slow one cannot publish over the results of a
+    /// newer one -- which is exactly the refresh that follows a pipeline run.
+    @State private var loadID = 0
+
     private func load(refresh: Bool = false) async {
+        loadID += 1
+        let id = loadID
         // A refresh keeps the current content on screen rather than flashing a
         // spinner over notes the user is reading.
         if !refresh { loading = true }
@@ -283,6 +292,7 @@ struct MeetingDetailView: View {
         // The background pass may not have reached this folder yet, so listing
         // it here is what keeps selection responsive.
         let contents = await library.contents(of: folder, refresh: refresh)
+        guard id == loadID else { return }
         self.contents = contents
         if refresh {
             record = nil
@@ -292,7 +302,9 @@ struct MeetingDetailView: View {
         }
 
         do {
-            record = try await MeetingLibrary.loadRecord(contents.notesJSON)
+            let loaded = try await MeetingLibrary.loadRecord(contents.notesJSON)
+            guard id == loadID else { return }
+            record = loaded
         } catch {
             // A folder whose JSON will not parse still has its text files, so
             // the error is reported without giving up on the meeting.
@@ -300,8 +312,11 @@ struct MeetingDetailView: View {
         }
 
         if record == nil {
-            legacyTranscript = await MeetingLibrary.loadText(contents.transcriptText)
-            legacySummary = await MeetingLibrary.loadText(contents.summaryText)
+            let transcript = await MeetingLibrary.loadText(contents.transcriptText)
+            let summary = await MeetingLibrary.loadText(contents.summaryText)
+            guard id == loadID else { return }
+            legacyTranscript = transcript
+            legacySummary = summary
         }
 
         // Resolved after the record is read, since the fallback comes from it.
@@ -341,7 +356,7 @@ private struct TagBar: View {
                 HStack(spacing: 4) {
                     Text(tag)
                     Button {
-                        apply { try tags.toggle(tag, for: folder.id) }
+                        Task { await apply { try await tags.toggle(tag, for: folder.id) } }
                     } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                     }
@@ -372,7 +387,9 @@ private struct TagBar: View {
                     if !unused.isEmpty {
                         Divider()
                         ForEach(unused, id: \.self) { tag in
-                            Button(tag) { apply { try tags.toggle(tag, for: folder.id) } }
+                            Button(tag) {
+                                Task { await apply { try await tags.toggle(tag, for: folder.id) } }
+                            }
                         }
                     }
                 } label: {
@@ -396,14 +413,15 @@ private struct TagBar: View {
     private func commit() {
         let value = draft.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else { return }
-        apply { try tags.set(current + [value], for: folder.id) }
+        let tag = value
         draft = ""
         adding = false
+        Task { await apply { try await tags.set(current + [tag], for: folder.id) } }
     }
 
-    private func apply(_ change: () throws -> Void) {
+    private func apply(_ change: () async throws -> Void) async {
         do {
-            try change()
+            try await change()
             error = nil
         } catch {
             self.error = "Could not save categories"

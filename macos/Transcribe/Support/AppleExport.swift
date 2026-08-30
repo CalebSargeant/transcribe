@@ -122,12 +122,21 @@ final class AppleExport {
             }
         }
 
-        do {
-            // One commit for the batch; committing per reminder is markedly
-            // slower and can leave half a meeting's actions behind on failure.
-            try store.commit()
-        } catch {
-            status = .failed("Could not save the reminders: \(error.localizedDescription)")
+        // One commit for the batch; committing per reminder is markedly slower
+        // and can leave half a meeting's actions behind on failure. Off the
+        // main actor because a commit talks to the Reminders store, which can
+        // take long enough to drop frames.
+        let eventStore = store
+        let failure = await MeetingLibrary.offMainActor { () -> String? in
+            do {
+                try eventStore.commit()
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }
+        if let failure {
+            status = .failed("Could not save the reminders: \(failure)")
             return 0
         }
 

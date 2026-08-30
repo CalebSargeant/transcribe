@@ -472,6 +472,10 @@ def main():
         )
 
         action = args[1] if len(args) > 1 else "status"
+        if action not in {"start", "stop", "status"}:
+            print(f"Unknown action {action!r}. Use: transcribe record start|stop|status")
+            sys.exit(1)
+
         config = load_config()
         try:
             if action == "start":
@@ -480,7 +484,11 @@ def main():
             if action == "start":
                 print("✓ Recording" if start_recording(client) else "Already recording")
             elif action == "stop":
-                print("✓ Stopped" if stop_recording(client) else "Not recording")
+                # stop_recording returns the output path, which OBS does not
+                # always report, so it cannot stand in for "did it stop".
+                was_recording = is_recording(client)
+                stop_recording(client)
+                print("✓ Stopped" if was_recording else "Not recording")
             else:
                 print("recording" if is_recording(client) else "idle")
         except ObsUnavailable as e:

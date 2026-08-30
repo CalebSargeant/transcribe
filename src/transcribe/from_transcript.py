@@ -239,6 +239,9 @@ def _apply_existing_context(folder, meeting):
         meeting.title = _title_from_folder_name(Path(folder).name)
 
 
+# "Speaker 5", "SPEAKER_01" -- a placeholder rather than a person.
+_ANONYMOUS_SPEAKER = re.compile(r"^(speaker[\s_-]*\d+|unknown.*)$", re.IGNORECASE)
+
 _DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}[ T](?:\d{2}-\d{2}-\d{2}|\d{4})?\s*")
 _TEAMS_SUFFIX = re.compile(r"[-_]\d{8}_\d{6}[-_]Meeting Recording$")
 
@@ -286,17 +289,34 @@ def _recording_start(folder, payload, meeting=None):
     return None
 
 
+_MEDIA_SUFFIXES = {".mov", ".mp4", ".m4v", ".m4a", ".qta", ".wav", ".mp3", ".mkv", ".avi"}
+
+
 def _source_reference(folder, payload):
-    """What to record as the source file, preserving what a previous run knew."""
+    """What to record as the source file.
+
+    Absolute, and pointing at something that exists. A previous run's value is
+    kept only if the file is still there: a recording that has since been moved
+    or deleted would otherwise be written back into notes.json indefinitely, and
+    the app resolves that path to find the media to play.
+    """
+    folder = Path(folder).resolve()
+
     existing = (payload or {}).get("source_file")
     if existing:
-        return existing
-    media = [
-        entry
-        for entry in sorted(Path(folder).iterdir())
-        if entry.suffix.lower() in {".mov", ".mp4", ".m4a", ".qta", ".wav", ".mp3", ".mkv", ".avi"}
-    ]
-    return str(media[0]) if media else str(Path(folder) / Path(folder).name)
+        candidate = Path(existing)
+        if not candidate.is_absolute():
+            candidate = folder / candidate
+        if candidate.exists():
+            return str(candidate.resolve())
+
+    media = sorted(entry for entry in folder.iterdir() if entry.suffix.lower() in _MEDIA_SUFFIXES)
+    if media:
+        return str(media[0].resolve())
+
+    # Nothing to point at. The previous value is better than a path that was
+    # never real, since it still records where the recording came from.
+    return existing or str(folder / folder.name)
 
 
 def generate_for_folder(folder, config, name_speakers=True):
@@ -326,8 +346,13 @@ def generate_for_folder(folder, config, name_speakers=True):
         payload = {}
 
     # Speaker naming only applies where the transcript recorded who was
-    # talking; the raw whisper format never did.
-    if name_speakers and meeting.speakers():
+    # talking, and only where those labels are still anonymous. A transcript
+    # whose speakers were named on a previous run already holds real names, and
+    # asking again can rename someone to the wrong person with no way back.
+    already_named = any(
+        speaker and not _ANONYMOUS_SPEAKER.match(speaker) for speaker in meeting.speakers()
+    )
+    if name_speakers and meeting.speakers() and not already_named:
         try:
             from .notes import resolve_speaker_names
 

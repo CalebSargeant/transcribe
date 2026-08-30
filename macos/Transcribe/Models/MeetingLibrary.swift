@@ -110,6 +110,15 @@ final class MeetingLibrary {
     private var loadID = 0
     private var enrichTask: Task<Void, Never>?
 
+    /// Roots whose listing blocked past the deadline. Each attempt strands a
+    /// worker on the shared queue for as long as the syscall hangs, so a user
+    /// clicking Refresh repeatedly would starve every other background read.
+    private var blockedRoots: Set<URL> = []
+
+    /// Let a root be tried again, for the Choose Folder button, which is the
+    /// action that actually changes the answer.
+    func forget(root: URL) { blockedRoots.remove(root) }
+
     /// Runs blocking filesystem work off the main actor.
     ///
     /// A detached task is not enough. Under the Swift 5 language mode a closure
@@ -145,13 +154,27 @@ final class MeetingLibrary {
         }
 
         phase = .loading
+
+        // Retrying a root already known to hang just strands another worker.
+        if blockedRoots.contains(root) {
+            folders = []
+            phase = .needsAccess(root)
+            return
+        }
+
         guard let found = await Self.scanWithDeadline(root: root) else {
             guard id == loadID else { return }
+            // Clear, or the previous folder's meetings stay live in the sidebar,
+            // the search index and the action list while the screen says the
+            // folder cannot be read.
+            folders = []
+            blockedRoots.insert(root)
             phase = .needsAccess(root)
             return
         }
 
         guard id == loadID else { return }
+        blockedRoots.remove(root)
         folders = found
         phase =
             found.isEmpty

@@ -480,3 +480,86 @@ def test_measured_timings_are_not_disclaimed(monkeypatch, tmp_path, config):
     )
     generate_for_folder(folder, config, name_speakers=False)
     assert "interpolated" not in captured["user"].lower()
+
+
+# --- speakers already named are left alone -----------------------------------
+
+
+def test_already_named_speakers_are_not_renamed(monkeypatch, tmp_path, config):
+    """Re-running notes could rename a real person to the wrong one, with no
+    way back to what the earlier run worked out."""
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text(
+        "Arno Bakker:\n[00:00:01] hello\n\nCaleb Sargeant:\n[00:00:05] hi\n"
+    )
+
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(
+        notes_mod, "resolve_speaker_names", lambda *a, **k: pytest.fail("must not rename")
+    )
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    assert generate_for_folder(folder, config) is not None
+
+
+def test_anonymous_speakers_are_still_named(monkeypatch, tmp_path, config):
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "transcript.txt").write_text(GROUPED)
+
+    called = {}
+    import transcribe.notes as notes_mod
+
+    monkeypatch.setattr(
+        notes_mod, "resolve_speaker_names", lambda *a, **k: called.setdefault("yes", True) or {}
+    )
+    monkeypatch.setattr(notes_mod, "complete_json", lambda *a, **k: {"title": "T", "summary": "s"})
+    generate_for_folder(folder, config)
+    assert called.get("yes")
+
+
+# --- source_file must be absolute and real -----------------------------------
+
+
+def test_source_file_points_at_the_media_that_is_there(tmp_path):
+    from transcribe.from_transcript import _source_reference
+
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "recording.mov").write_bytes(b"x")
+    reference = _source_reference(folder, {})
+    assert reference.endswith("recording.mov")
+    assert reference.startswith("/")
+
+
+def test_a_stale_source_file_is_replaced_by_real_media(tmp_path):
+    from transcribe.from_transcript import _source_reference
+
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "recording.mov").write_bytes(b"x")
+    reference = _source_reference(folder, {"source_file": "/gone/missing.mov"})
+    assert reference.endswith("recording.mov")
+
+
+def test_a_relative_source_file_is_resolved(tmp_path):
+    from transcribe.from_transcript import _source_reference
+
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    (folder / "recording.mov").write_bytes(b"x")
+    reference = _source_reference(folder, {"source_file": "recording.mov"})
+    assert reference.startswith("/") and reference.endswith("recording.mov")
+
+
+def test_a_still_valid_source_file_is_kept(tmp_path):
+    from transcribe.from_transcript import _source_reference
+
+    elsewhere = tmp_path / "Movies"
+    elsewhere.mkdir()
+    original = elsewhere / "original.mov"
+    original.write_bytes(b"x")
+    folder = tmp_path / "m1"
+    folder.mkdir()
+    assert _source_reference(folder, {"source_file": str(original)}) == str(original)

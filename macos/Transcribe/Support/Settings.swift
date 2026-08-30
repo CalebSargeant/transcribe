@@ -208,17 +208,13 @@ enum ConfigKey {
     static let transcriptBudget = "transcript_token_budget"
     static let boundaryBudget = "boundary_token_budget"
     static let categoryMaxTokens = "category_max_tokens"
-    static let notesTemperature = "notes_temperature"
     static let diarizationShift = "diarization_window_shift_ratio"
-    static let diarizationMinOn = "diarization_min_duration_on"
-    static let diarizationMinOff = "diarization_min_duration_off"
     static let diarizationModelDir = "diarization_model_dir"
     static let videoExtensions = "video_extensions"
     static let ignoredDevices = "autorecord_ignored_devices"
     static let ignoredCameras = "autorecord_ignored_cameras"
     static let llmTimeout = "llm_timeout_seconds"
     static let llmRetries = "llm_max_retries"
-    static let icloudBaseURL = "icloud_base_url"
 
     /// Keys the app builds a dedicated control for. Anything in the file that
     /// is not here shows up in Advanced ▸ Other settings, so a key added to the
@@ -230,17 +226,24 @@ enum ConfigKey {
         splitMeetings, splitVideo, meetingGap, minMeeting, moveSource, calendar, calendarMargin,
         calendarSource, requireCamera, useCalendar, micOnly, startAfter, stopAfter, minFreeGB,
         obsHost, obsPort, obsPassword, slackBotToken, slackChannel, slackWebhook, meetingMode,
-        knownParticipants, notesFolder, remindersList, exportOnGenerate, pollSeconds,
+        knownParticipants, notesFolder, remindersList, pollSeconds,
         notesMaxTokens, speakerMaxTokens, boundaryMaxTokens, vadThreshold, suppressNonSpeech,
-        transcriptBudget, boundaryBudget, categoryMaxTokens, notesTemperature, diarizationShift,
-        diarizationMinOn, diarizationMinOff, diarizationModelDir, videoExtensions,
-        ignoredDevices, ignoredCameras, llmTimeout, llmRetries, icloudBaseURL,
-        "anthropic_auth_token",
+        transcriptBudget, boundaryBudget, categoryMaxTokens, diarizationShift,
+        diarizationModelDir, videoExtensions, ignoredDevices, ignoredCameras,
+        llmTimeout, llmRetries, "anthropic_auth_token",
     ]
+
+    // Deliberately NOT in `covered`. Each is read by the pipeline and has no
+    // dedicated control, so listing it here would filter it out of Advanced's
+    // catch-all and leave it unreachable -- the opposite of what `covered` is
+    // for. They show up as editable text fields instead.
+    static let notesTemperature = "notes_temperature"
+    static let diarizationMinOn = "diarization_min_duration_on"
+    static let diarizationMinOff = "diarization_min_duration_off"
+    static let icloudBaseURL = "icloud_base_url"
 
     static let notesFolder = "apple_notes_folder"
     static let remindersList = "apple_reminders_list"
-    static let exportOnGenerate = "apple_export_automatically"
 
     static let meetingMode = "meeting_mode"
     static let calendarSource = "calendar_source"

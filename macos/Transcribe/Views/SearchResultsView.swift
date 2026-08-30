@@ -8,6 +8,8 @@ import SwiftUI
 struct SearchResultsView: View {
     @Environment(MeetingIndex.self) private var index
     let query: String
+    /// Nil when no category filter is active.
+    var limitedTo: Set<URL>?
     let onOpen: (URL, Double?) -> Void
 
     /// Computed once per query change, not once per `body`. `results` was read
@@ -83,8 +85,10 @@ struct SearchResultsView: View {
         }
         // Keyed on the index's progress as well as the query: results computed
         // while indexing was at 30% never refreshed when it reached 100%.
-        .task(id: SearchKey(query: query, progress: index.progress)) {
-            results = index.search(query)
+        .task(id: SearchKey(query: query, progress: index.progress, limited: limitedTo?.count)) {
+            let found = index.search(query)
+            results = limitedTo.map { allowed in found.filter { allowed.contains($0.folder) } }
+                ?? found
         }
         .navigationTitle("“\(query)”")
         .navigationSubtitle(
@@ -95,6 +99,7 @@ struct SearchResultsView: View {
     private struct SearchKey: Equatable {
         let query: String
         let progress: Double
+        let limited: Int?
     }
 
     /// Bold the matched span so the eye lands on it.

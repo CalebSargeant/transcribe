@@ -26,6 +26,10 @@ struct MenuBarView: View {
             if let error = monitor.lastError {
                 Text(error).font(.caption)
             }
+            if let error = pipeline.recordError {
+                Text(error).font(.caption)
+                Button("Dismiss") { pipeline.clearRecordError() }
+            }
 
             Divider()
 

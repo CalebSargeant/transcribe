@@ -22,6 +22,13 @@ final class Pipeline {
     /// The meeting folder the current run is about, so a detail view can tell
     /// whether a finished run concerns it.
     private(set) var lastTarget: URL?
+
+    /// Recording failures, kept apart from `state` so they cannot overwrite a
+    /// transcription that is still running.
+    private(set) var recordError: String?
+    private(set) var recordOutput: String = ""
+
+    func clearRecordError() { recordError = nil; recordOutput = "" }
     private var task: Task<Void, Never>?
 
     /// Holds the running child so cancelling can actually kill it.
@@ -46,6 +53,8 @@ final class Pipeline {
     }
 
     private var box = ProcessBox()
+    /// Distinguishes our own terminate from an external kill.
+    private var wasCancelled = false
 
     /// Where the CLI might be. A Homebrew install and a local checkout put it
     /// in different places, and the app must not care which the user has.
@@ -70,6 +79,7 @@ final class Pipeline {
     /// carried on while the buttons re-enabled and a second run could be
     /// started over the same folder. The child is signalled too.
     func cancel() {
+        if isRunning { wasCancelled = true }
         box.terminate()
         task?.cancel()
         task = nil
@@ -134,17 +144,20 @@ final class Pipeline {
     /// The provider, key, model and prompt all live in the Python already;
     /// re-implementing an LLM client here would be a second thing to configure
     /// and a second thing to get wrong.
-    func categorise(folders: [URL]) {
+    func categorise(folders: [URL], overwrite: Bool = false) {
         guard let tool = Self.locate() else {
             state = .failed(missingToolMessage)
             return
         }
         guard !folders.isEmpty else { return }
+        var arguments = ["categorise"] + folders.map { $0.path(percentEncoded: false) }
+        if overwrite { arguments.append("--overwrite") }
         run(
             tool: tool,
-            arguments: ["categorise"] + folders.map { $0.path(percentEncoded: false) },
+            arguments: arguments,
             label: folders.count == 1
-                ? "Categorising 1 meeting" : "Categorising \(folders.count) meetings"
+                ? "Categorising 1 meeting" : "Categorising \(folders.count) meetings",
+            target: folders.count == 1 ? folders[0] : nil
         )
     }
 
@@ -166,10 +179,16 @@ final class Pipeline {
             box: ProcessBox()
         )
         if result.status != 0 {
-            output = result.output
-            state = .failed(
+            // Reported separately, not through `state`: a transcription can be
+            // running, and overwriting its state hides the Cancel button and
+            // re-enables the controls that would kill it.
+            recordError =
                 (start ? "Could not start recording" : "Could not stop recording")
-                    + " (exit \(result.status)). See the log below.")
+                + " (exit \(result.status))."
+            recordOutput = result.output
+        } else {
+            recordError = nil
+            recordOutput = ""
         }
         return result.status == 0
     }
@@ -195,13 +214,20 @@ final class Pipeline {
             switch result.status {
             case 0:
                 self.state = .finished(label)
-            case SIGTERM, SIGKILL, -SIGTERM, -SIGKILL:
-                // Terminated by cancel(), which already set .idle.
-                self.state = .idle
+            case let status where status < 0:
+                // Process reports a signal as a negative status. Anything
+                // signalled while we were not cancelling was killed from
+                // outside, which is worth saying rather than calling it a
+                // generic failure.
+                self.state =
+                    self.wasCancelled
+                    ? .idle
+                    : .failed("\(label) was stopped (signal \(-status)).")
             default:
                 self.state = .failed(
                     "\(label) failed (exit \(result.status)). See the log below.")
             }
+            self.wasCancelled = false
         }
     }
 

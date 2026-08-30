@@ -254,9 +254,17 @@ private struct TranscriptionSettings: View {
                 Text("Leave on. Without it Whisper invents filler over room tone and can lock into a repetition loop.")
                     .font(.caption).foregroundStyle(.secondary)
 
-                Toggle("Learn vocabulary from past meetings", isOn: settings.flag(ConfigKey.whisperAutoPrompt, default: true))
-                Text("Builds the decoder prompt from your calendar, past notes and corrections, instead of a hand-kept list.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(
+                    "Learn vocabulary from past meetings",
+                    isOn: settings.flag(ConfigKey.whisperAutoPrompt, default: true)
+                )
+                .help("Read by the vocabulary learning in the transcription pipeline.")
+                Text(
+                    "Builds the decoder prompt from your calendar, past notes and corrections, "
+                        + "instead of a hand-kept list. Requires a pipeline version that supports "
+                        + "it; older ones ignore this and use the prompt above."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Speakers") {

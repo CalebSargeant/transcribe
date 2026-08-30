@@ -96,7 +96,7 @@ struct LibraryView: View {
     @ViewBuilder
     private var detail: some View {
         if searching {
-            SearchResultsView(query: search) { folder, seconds in
+            SearchResultsView(query: search, limitedTo: taggedFolders) { folder, seconds in
                 open(folder: folder, seek: seconds)
             }
         } else {
@@ -249,6 +249,18 @@ struct LibraryView: View {
         }
     }
 
+    /// The folders the category filter allows, or nil when it is off. Search
+    /// used to ignore it, so filtering to a category and then searching
+    /// returned meetings from every other category.
+    private var taggedFolders: Set<URL>? {
+        guard let tagFilter else { return nil }
+        return Set(
+            library.folders.map(\.id).filter { folder in
+                tags.tags(for: folder)
+                    .contains { $0.caseInsensitiveCompare(tagFilter) == .orderedSame }
+            })
+    }
+
     private var filtered: [MeetingFolder] {
         // While searching, the sidebar narrows to the meetings the results are
         // drawn from. A full list beside a filtered detail pane reads as though
@@ -352,8 +364,14 @@ struct LibraryView: View {
             pipeline.notesFromTranscript(folder: folder.id)
         }
         .disabled(pipeline.isRunning)
-        Button("Categorise") {
-            pipeline.categorise(folders: [folder.id])
+        Button(tags.tags(for: folder.id).isEmpty ? "Categorise" : "Re-categorise") {
+            pipeline.categorise(
+                folders: [folder.id],
+                // Without this the CLI skips a meeting that already has
+                // categories, and the run reports success having changed
+                // nothing.
+                overwrite: !tags.tags(for: folder.id).isEmpty
+            )
         }
         .disabled(pipeline.isRunning)
         Divider()
@@ -401,6 +419,9 @@ struct LibraryView: View {
         panel.message = "Pick the folder your meetings are saved to."
         panel.directoryURL = settings.folder(ConfigKey.destination)
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Picking it in the panel IS the grant, so a previously blocked root
+        // deserves another attempt.
+        library.forget(root: url)
         selection = nil
         // Writing it through is what makes .task(id:) reload, and what the CLI
         // will read on its next run.
